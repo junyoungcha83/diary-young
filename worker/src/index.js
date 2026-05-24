@@ -52,12 +52,14 @@ async function ocrDiaryPhoto(env, dataUrl, year) {
     '  "date_md": "MM-DD 형식. 예: 12-03. 못 읽으면 빈 문자열",\n' +
     '  "weekday": "월요일/화요일/... 또는 빈 문자열",\n' +
     '  "title": "그 날의 제목이 있으면 적고, 없으면 빈 문자열",\n' +
-    '  "content": "그 날의 본문. 손글씨도 그대로 옮기되, 줄바꿈은 \\n. 그림이 있으면 본문 끝에 [그림: 무엇] 한 줄.",\n' +
-    '  "tags": ["감정·주제 키워드", "..."]\n' +
+    '  "content": "그 날의 본문. 손글씨도 그대로 옮기되, 줄바꿈은 \\n. 본문에는 [그림: ...] 같은 메타 표기를 넣지 마세요.",\n' +
+    '  "tags": ["감정·주제 키워드", "..."],\n' +
+    '  "photo_bboxes": [[x, y, w, h], ...]  // 해당 날짜 영역 안에 사진(그림/스크린샷/이모지가 아닌 실제 이미지) 이 있으면 좌표를 0~1 정규화로. 좌상단=[0,0], 우하단=[1,1]. x,y 는 좌상단 모서리, w,h 는 너비/높이. 사진 여러 장이면 여러 개. 없으면 빈 배열.\n' +
     '}\n' +
     '규칙:\n' +
     '- 날짜를 못 읽거나 본문이 비어있는 항목은 배열에서 제외하세요\n' +
-    '- 날짜 형식은 자유롭게 인식하세요 (12/3, 12.03, 12월 3일 등)\n' +
+    '- 날짜 형식은 자유롭게 인식 (12/3, 12.03, 12월 3일 등)\n' +
+    '- photo_bboxes: 해당 일자 텍스트 블록 바로 다음/아래에 있는 사진들. 다음 날짜가 시작되기 직전까지의 사진들을 그 날에 귀속.\n' +
     '- 일자가 하나만 있어도 길이 1인 배열로 반환\n' +
     '- 시간 순서대로 정렬';
 
@@ -113,6 +115,19 @@ async function ocrDiaryPhoto(env, dataUrl, year) {
         const dd = String(parseInt(mdMatch[2], 10)).padStart(2, '0');
         date = `${validYear}-${mm}-${dd}`;
       }
+      // photo_bboxes 정규화 — 0~1 범위, 잘못된 값 필터
+      const bboxes = Array.isArray(e.photo_bboxes) ? e.photo_bboxes
+                   : Array.isArray(e.photo_bbox) ? [e.photo_bbox]  // 단수형도 호환
+                   : [];
+      const cleanBboxes = bboxes
+        .filter(b => Array.isArray(b) && b.length === 4 && b.every(n => typeof n === 'number' && isFinite(n)))
+        .map(([x, y, w, h]) => [
+          Math.max(0, Math.min(1, x)),
+          Math.max(0, Math.min(1, y)),
+          Math.max(0, Math.min(1, w)),
+          Math.max(0, Math.min(1, h)),
+        ])
+        .filter(([x, y, w, h]) => w > 0.02 && h > 0.02 && !(x === 0 && y === 0 && w >= 0.98 && h >= 0.98));  // 너무 작거나 전체이미지인 bbox 제외
       return {
         date,                                                                    // YYYY-MM-DD (없으면 빈 문자열)
         date_md: md,
@@ -120,8 +135,9 @@ async function ocrDiaryPhoto(env, dataUrl, year) {
         title: typeof e.title === 'string' ? e.title : '',
         content: typeof e.content === 'string' ? e.content : '',
         tags: Array.isArray(e.tags) ? e.tags.filter(t => typeof t === 'string') : [],
+        photo_bboxes: cleanBboxes,
       };
-    }).filter(e => e.content || e.title);
+    }).filter(e => e.content || e.title || e.photo_bboxes.length);
     return { ok: true, entries };
   } catch (e) {
     return { error: 'fetch_failed', detail: String(e && e.message || e) };

@@ -3,12 +3,15 @@
 // 사진은 클라이언트에서 축소 후 base64로 entry.photos[].url 에 저장.
 
 const STORAGE_KEY = 'diary-young-state-v1';
+const DRAFT_KEY   = 'diary-young-draft-v1';
 const TOKEN_KEY   = 'diary-young-edit-token';
 const API_BASE    = 'https://diary-young-api.junyoung-cha83.workers.dev';
 const SAVE_DEBOUNCE_MS = 800;
+const DRAFT_DEBOUNCE_MS = 400;
 
-const PHOTO_MAX_DIM = 1024;        // 최대 한 변 1024px 로 축소
+const PHOTO_MAX_DIM = 1600;        // 최대 한 변 1600px (OCR 정확도 + crop 품질 균형)
 const PHOTO_JPEG_QUALITY = 0.78;
+const CROP_MAX_DIM = 1024;         // bbox crop 결과는 1024px 로 줄여 저장
 
 const DEFAULT_STATE = {
   version: 1,
@@ -161,6 +164,59 @@ async function pushToServer() {
   }
 }
 
+// ── 모달 드래프트 자동 저장 — 백그라운드/리로드 후에도 입력 살아남게 ──
+let _draftTimer = null;
+function snapshotDraft() {
+  const dlg = document.getElementById('diaryDialog');
+  if (!dlg || !dlg.open) return null;
+  if (multiEntries.length > 0) {
+    return {
+      open: true, kind: 'multi',
+      year: parseInt(document.getElementById('fYear').value, 10) || null,
+      editEntryId,
+      multiEntries: multiEntries.map(e => ({
+        date: e.date, weekday: e.weekday, title: e.title, content: e.content,
+        tags: e.tags.slice(), photos: e.photos.map(p => ({ id: p.id, url: p.url })),
+        excluded: !!e.excluded,
+      })),
+    };
+  }
+  return {
+    open: true, kind: 'single',
+    editEntryId,
+    year: parseInt(document.getElementById('fYear').value, 10) || null,
+    date: document.getElementById('fDate').value,
+    title: document.getElementById('fTitle').value,
+    content: document.getElementById('fContent').value,
+    tags: document.getElementById('fTags').value,
+    editingPhotos: editingPhotos.map(p => ({ id: p.id, url: p.url })),
+  };
+}
+function saveDraftNow() {
+  try {
+    const snap = snapshotDraft();
+    if (snap) localStorage.setItem(DRAFT_KEY, JSON.stringify(snap));
+    else      localStorage.removeItem(DRAFT_KEY);
+  } catch (e) {}
+}
+function saveDraftDebounced() {
+  if (_draftTimer) clearTimeout(_draftTimer);
+  _draftTimer = setTimeout(saveDraftNow, DRAFT_DEBOUNCE_MS);
+}
+function clearDraft() {
+  if (_draftTimer) { clearTimeout(_draftTimer); _draftTimer = null; }
+  try { localStorage.removeItem(DRAFT_KEY); } catch (e) {}
+}
+function loadDraft() {
+  try {
+    const raw = localStorage.getItem(DRAFT_KEY);
+    if (!raw) return null;
+    const d = JSON.parse(raw);
+    if (d && d.open && (d.kind === 'single' || d.kind === 'multi')) return d;
+  } catch (e) {}
+  return null;
+}
+
 function setOcrStatus(text, cls) {
   const el = document.getElementById('ocrStatus');
   if (!el) return;
@@ -217,18 +273,30 @@ async function ocrFirstPhoto(photo) {
       setTimeout(() => setOcrStatus(''), 4000);
       return;
     }
-    // N편 — 다중 모드 진입
-    multiEntries = entries.map(e => ({
-      date: e.date || '',
-      weekday: e.weekday || '',
-      title: e.title || '',
-      content: e.content || '',
-      tags: Array.isArray(e.tags) ? e.tags : [],
-      excluded: false,
+    // N편 — 다중 모드 진입. bbox 있는 항목은 사진을 잘라내 photos 로 첨부.
+    const totalBboxes = entries.reduce((s, e) => s + (e.photo_bboxes || []).length, 0);
+    if (totalBboxes > 0) setOcrStatus(`🖼 ${totalBboxes}장의 사진 잘라내는 중…`);
+    multiEntries = await Promise.all(entries.map(async (e) => {
+      const photos = [];
+      for (const bbox of (e.photo_bboxes || [])) {
+        try {
+          const p = await cropPhotoFromBbox(photo.url, bbox);
+          if (p) photos.push(p);
+        } catch (err) { console.warn('[ocr] crop failed', err); }
+      }
+      return {
+        date: e.date || '',
+        weekday: e.weekday || '',
+        title: e.title || '',
+        content: e.content || '',
+        tags: Array.isArray(e.tags) ? e.tags : [],
+        photos,
+        excluded: false,
+      };
     }));
     enterMultiMode();
-    setOcrStatus(`✓ ${entries.length}편 인식됨 — 검토 후 저장`);
-    setTimeout(() => setOcrStatus(''), 3500);
+    setOcrStatus(`✓ ${entries.length}편 인식됨${totalBboxes ? ` (사진 ${totalBboxes}장 자동 첨부)` : ''} — 검토 후 저장`);
+    setTimeout(() => setOcrStatus(''), 4000);
   } catch (e) {
     setOcrStatus('✗ 네트워크 오류 — 직접 입력해 주세요', 'error');
   }
@@ -239,6 +307,7 @@ function enterMultiMode() {
   document.getElementById('multiSection').classList.remove('hidden');
   document.getElementById('diaryDialogTitle').textContent = `여러 일기 가져오기`;
   renderMultiEntries();
+  saveDraftNow();
 }
 
 function exitMultiMode() {
@@ -246,6 +315,7 @@ function exitMultiMode() {
   document.getElementById('singleEntrySection').classList.remove('hidden');
   document.getElementById('multiSection').classList.add('hidden');
   document.getElementById('diaryDialogTitle').textContent = editEntryId ? '일기 편집' : '새 일기';
+  saveDraftNow();
 }
 
 function renderMultiEntries() {
@@ -253,30 +323,56 @@ function renderMultiEntries() {
   const count = document.getElementById('multiCount');
   const active = multiEntries.filter(e => !e.excluded).length;
   count.textContent = `${active} / ${multiEntries.length}`;
-  list.innerHTML = multiEntries.map((e, idx) => `
-    <div class="multi-card${e.excluded ? ' excluded' : ''}" data-idx="${idx}">
-      <button type="button" class="toggle-exclude">${e.excluded ? '포함' : '제외'}</button>
-      <div class="head">
-        <input type="date" class="date-in" value="${escapeAttr(e.date)}" />
-        ${e.weekday ? `<span class="weekday">${escapeHtml(e.weekday)}</span>` : ''}
+  list.innerHTML = multiEntries.map((e, idx) => {
+    const photos = (e.photos || []);
+    const photosHtml = photos.length ? `
+      <div class="multi-photos">
+        ${photos.map((p, pIdx) => `
+          <div class="multi-photo-thumb" data-pidx="${pIdx}">
+            <img src="${escapeAttr(p.url)}" alt="" />
+            <button type="button" class="del" aria-label="사진 삭제">×</button>
+          </div>
+        `).join('')}
       </div>
-      <input type="text" class="title-in" placeholder="제목 (선택)" value="${escapeAttr(e.title)}" />
-      <textarea class="content-in" rows="4" placeholder="본문">${escapeHtml(e.content)}</textarea>
-      <input type="text" class="tags-in" placeholder="태그 (쉼표로 구분)" value="${escapeAttr(e.tags.join(', '))}" />
-    </div>
-  `).join('');
+    ` : '';
+    return `
+      <div class="multi-card${e.excluded ? ' excluded' : ''}" data-idx="${idx}">
+        <button type="button" class="toggle-exclude">${e.excluded ? '포함' : '제외'}</button>
+        <div class="head">
+          <input type="date" class="date-in" value="${escapeAttr(e.date)}" />
+          ${e.weekday ? `<span class="weekday">${escapeHtml(e.weekday)}</span>` : ''}
+        </div>
+        <input type="text" class="title-in" placeholder="제목 (선택)" value="${escapeAttr(e.title)}" />
+        <textarea class="content-in" rows="4" placeholder="본문">${escapeHtml(e.content)}</textarea>
+        <input type="text" class="tags-in" placeholder="태그 (쉼표로 구분)" value="${escapeAttr(e.tags.join(', '))}" />
+        ${photosHtml}
+      </div>
+    `;
+  }).join('');
   list.querySelectorAll('.multi-card').forEach(card => {
     const idx = parseInt(card.dataset.idx, 10);
     card.querySelector('.toggle-exclude').onclick = () => {
       multiEntries[idx].excluded = !multiEntries[idx].excluded;
       renderMultiEntries();
+      saveDraftDebounced();
     };
-    card.querySelector('.date-in').onchange = (ev) => { multiEntries[idx].date = ev.target.value; };
-    card.querySelector('.title-in').onchange = (ev) => { multiEntries[idx].title = ev.target.value; };
-    card.querySelector('.content-in').onchange = (ev) => { multiEntries[idx].content = ev.target.value; };
+    card.querySelector('.date-in').onchange = (ev) => { multiEntries[idx].date = ev.target.value; saveDraftDebounced(); };
+    card.querySelector('.title-in').onchange = (ev) => { multiEntries[idx].title = ev.target.value; saveDraftDebounced(); };
+    card.querySelector('.content-in').onchange = (ev) => { multiEntries[idx].content = ev.target.value; saveDraftDebounced(); };
     card.querySelector('.tags-in').onchange = (ev) => {
       multiEntries[idx].tags = ev.target.value.split(/[,\s]+/).map(s => s.replace(/^#/, '').trim()).filter(Boolean);
+      saveDraftDebounced();
     };
+    card.querySelectorAll('.multi-photo-thumb').forEach(thumb => {
+      const pIdx = parseInt(thumb.dataset.pidx, 10);
+      thumb.querySelector('.del').onclick = (ev) => {
+        ev.stopPropagation();
+        multiEntries[idx].photos.splice(pIdx, 1);
+        renderMultiEntries();
+        saveDraftDebounced();
+      };
+      thumb.querySelector('img').onclick = () => openPhotoViewer(thumb.querySelector('img').src);
+    });
   });
 }
 
@@ -375,6 +471,35 @@ function drawScaled(img, maxDim) {
   const ctx = c.getContext('2d');
   ctx.drawImage(img, 0, 0, w, h);
   return { canvas: c, mime: 'image/jpeg' };
+}
+
+// 정규화 bbox [x,y,w,h] (0~1) 기준으로 sourceDataUrl 에서 잘라내 photo 객체 반환
+async function cropPhotoFromBbox(sourceDataUrl, bbox) {
+  const [nx, ny, nw, nh] = bbox;
+  const img = await loadImage(sourceDataUrl);
+  const W = img.naturalWidth || img.width;
+  const H = img.naturalHeight || img.height;
+  // 픽셀 좌표 (가벼운 패딩 — claude 좌표가 살짝 빗나가도 잘림 줄이려고 2% margin)
+  const pad = 0.005;
+  const sx = Math.max(0, Math.round((nx - pad) * W));
+  const sy = Math.max(0, Math.round((ny - pad) * H));
+  const sw = Math.min(W - sx, Math.round((nw + pad * 2) * W));
+  const sh = Math.min(H - sy, Math.round((nh + pad * 2) * H));
+  if (sw <= 0 || sh <= 0) return null;
+  // 우선 원본 픽셀 그대로 캔버스에
+  const c1 = document.createElement('canvas');
+  c1.width = sw; c1.height = sh;
+  c1.getContext('2d').drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+  // CROP_MAX_DIM 으로 축소 (저장 용량 절감)
+  let outW = sw, outH = sh;
+  if (outW > CROP_MAX_DIM || outH > CROP_MAX_DIM) {
+    if (outW >= outH) { outH = Math.round(outH * CROP_MAX_DIM / outW); outW = CROP_MAX_DIM; }
+    else              { outW = Math.round(outW * CROP_MAX_DIM / outH); outH = CROP_MAX_DIM; }
+  }
+  const c2 = document.createElement('canvas');
+  c2.width = outW; c2.height = outH;
+  c2.getContext('2d').drawImage(c1, 0, 0, outW, outH);
+  return { id: nextPhotoId(), url: c2.toDataURL('image/jpeg', PHOTO_JPEG_QUALITY) };
 }
 
 // ── 집계 ────────────────────────────────────────
@@ -629,6 +754,7 @@ function openDiaryDialog(editId) {
   renderPhotoThumbs();
   setOcrStatus('');
   if (!dlg.open) dlg.showModal();
+  saveDraftNow();
 
   // 편집 권한 없으면 입력 잠금 (열람만)
   const readOnly = !getEditToken();
@@ -645,6 +771,7 @@ function closeDiaryDialog() {
   editEntryId = null;
   editingPhotos = [];
   multiEntries = [];
+  clearDraft();
 }
 
 function renderPhotoThumbs() {
@@ -661,6 +788,7 @@ function renderPhotoThumbs() {
       ev.stopPropagation();
       editingPhotos = editingPhotos.filter(p => p.id !== id);
       renderPhotoThumbs();
+      saveDraftDebounced();
     };
     t.querySelector('img').onclick = () => openPhotoViewer(t.querySelector('img').src);
   });
@@ -689,7 +817,7 @@ function saveDiary() {
         title: e.title || '',
         content: e.content || '',
         tags: e.tags || [],
-        photos: [],
+        photos: (e.photos || []).slice(),
         created_at: ts,
         updated_at: ts,
       });
@@ -813,6 +941,12 @@ function bindUI() {
   document.getElementById('diaryDialog').addEventListener('cancel', (e) => { e.preventDefault(); closeDiaryDialog(); });
   document.getElementById('diaryForm').addEventListener('submit', (e) => { e.preventDefault(); saveDiary(); });
   document.getElementById('diaryDelete').onclick = deleteDiary;
+
+  // 단일 모드 입력 — 드래프트 자동 저장
+  ['fYear', 'fDate', 'fTitle', 'fContent', 'fTags'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('input', saveDraftDebounced);
+  });
   document.getElementById('fPhoto').addEventListener('change', async (e) => {
     const files = Array.from(e.target.files || []);
     const wasEmpty = editingPhotos.length === 0;
@@ -831,6 +965,7 @@ function bindUI() {
     }
     e.target.value = '';
     renderPhotoThumbs();
+    saveDraftDebounced();
     // 새 일기 + 첫 사진 → OCR 자동 인식
     if (firstAdded && wasEmpty && isNewEntry) {
       ocrFirstPhoto(firstAdded);
@@ -883,15 +1018,65 @@ function bindUI() {
   };
 }
 
+function restoreDraftIfAny() {
+  const d = loadDraft();
+  if (!d) return;
+  // 권한 없으면 복원 불가 (편집 불가능)
+  if (!getEditToken()) { clearDraft(); return; }
+  if (d.kind === 'multi' && Array.isArray(d.multiEntries) && d.multiEntries.length) {
+    editEntryId = d.editEntryId || null;
+    editingPhotos = [];
+    multiEntries = d.multiEntries.map(e => ({
+      date: e.date || '', weekday: e.weekday || '',
+      title: e.title || '', content: e.content || '',
+      tags: Array.isArray(e.tags) ? e.tags.slice() : [],
+      photos: Array.isArray(e.photos) ? e.photos.map(p => ({ id: p.id, url: p.url })) : [],
+      excluded: !!e.excluded,
+    }));
+    const dlg = document.getElementById('diaryDialog');
+    const footer = dlg.querySelector('.dialog-footer');
+    footer.classList.add('hidden');
+    document.getElementById('fYear').value = d.year || new Date().getFullYear();
+    enterMultiMode();
+    if (!dlg.open) dlg.showModal();
+    setOcrStatus('💾 이전 작업 복원됨');
+    setTimeout(() => setOcrStatus(''), 3000);
+  } else if (d.kind === 'single') {
+    editEntryId = d.editEntryId || null;
+    editingPhotos = Array.isArray(d.editingPhotos) ? d.editingPhotos.map(p => ({ id: p.id, url: p.url })) : [];
+    const dlg = document.getElementById('diaryDialog');
+    const footer = dlg.querySelector('.dialog-footer');
+    document.getElementById('singleEntrySection').classList.remove('hidden');
+    document.getElementById('multiSection').classList.add('hidden');
+    document.getElementById('diaryDialogTitle').textContent = editEntryId ? '일기 편집' : '새 일기';
+    document.getElementById('fYear').value = d.year || new Date().getFullYear();
+    document.getElementById('fDate').value = d.date || todayStr();
+    document.getElementById('fTitle').value = d.title || '';
+    document.getElementById('fContent').value = d.content || '';
+    document.getElementById('fTags').value = d.tags || '';
+    renderPhotoThumbs();
+    if (editEntryId) footer.classList.remove('hidden'); else footer.classList.add('hidden');
+    if (!dlg.open) dlg.showModal();
+    setOcrStatus('💾 이전 작업 복원됨');
+    setTimeout(() => setOcrStatus(''), 3000);
+  } else {
+    clearDraft();
+  }
+}
+
 async function bootstrap() {
   bindUI();
   updateEditUI();
   state = await loadInitial();
-  // 이번 달에 일기가 있고 오늘 데이터가 비어있으면, viewMonth 만 따라간다
   viewMonth = monthKey(new Date());
   selectedDate = todayStr();
   setSyncStatus(getEditToken() ? 'idle' : 'readonly');
   render();
+  restoreDraftIfAny();
+  // 백그라운드 진입 / 페이지 숨김 시 드래프트 즉시 저장 (iOS 메모리 회수 대비)
+  document.addEventListener('visibilitychange', () => { if (document.hidden) saveDraftNow(); });
+  window.addEventListener('pagehide', saveDraftNow);
+  window.addEventListener('beforeunload', saveDraftNow);
 }
 
 bootstrap();
