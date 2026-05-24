@@ -17,7 +17,7 @@
   --safe-bottom: env(safe-area-inset-bottom);
 }
 
-* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; min-width: 0; }
 html, body {
   height: 100%;
   margin: 0;
@@ -28,6 +28,7 @@ html, body {
   line-height: 1.5;
   font-size: 15px;
   overscroll-behavior: none;
+  overflow-x: hidden;          /* 가로 스크롤 차단 — 어떤 카드도 viewport 벗어나면 안 됨 */
 }
 button, textarea { font-family: inherit; }
 input, textarea { font-family: inherit; font-size: 16px; }
@@ -148,6 +149,7 @@ input, textarea { font-family: inherit; font-size: 16px; }
 /* ── 일기 카드 리스트 ── */
 .diary-list {
   display: flex; flex-direction: column; gap: 10px;
+  max-width: 100%;
 }
 .diary-card {
   background: var(--card);
@@ -155,6 +157,8 @@ input, textarea { font-family: inherit; font-size: 16px; }
   border-radius: 12px;
   padding: 14px 16px;
   cursor: pointer;
+  max-width: 100%;
+  overflow: hidden;              /* 내부 photos overflow-x:auto 와 분리 */
 }
 .diary-card:active { background: #fafafa; }
 .diary-card .card-head {
@@ -212,19 +216,23 @@ input, textarea { font-family: inherit; font-size: 16px; }
 }
 
 /* ── 검색 ── */
+#tabSearch { max-width: 100%; }
 .search-bar {
   display: flex; align-items: center;
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: 99px;
   padding: 4px 8px 4px 16px;
+  max-width: 100%;
 }
 .search-bar input {
-  flex: 1; border: none; outline: none; background: transparent;
+  flex: 1; min-width: 0;        /* flex item 가로 잘림 방지 */
+  border: none; outline: none; background: transparent;
   padding: 8px 0;
 }
 .tag-cloud {
   display: flex; flex-wrap: wrap; gap: 6px;
+  max-width: 100%;
 }
 .tag-cloud .tag-chip {
   font-size: .82rem;
@@ -234,6 +242,10 @@ input, textarea { font-family: inherit; font-size: 16px; }
   border: 1px solid var(--border);
   cursor: pointer;
   color: var(--text);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .tag-cloud .tag-chip.active {
   background: var(--primary);
@@ -301,7 +313,7 @@ input, textarea { font-family: inherit; font-size: 16px; }
 .fab:active { background: var(--primary-dark); }
 body.read-only .fab { display: none; }
 
-/* ── 하단 탭바 ── */
+/* ── 하단 탭바 (항상 viewport 바닥에 고정) ── */
 .tab-bar {
   position: fixed; left: 0; right: 0; bottom: 0;
   height: calc(var(--tab-h) + var(--safe-bottom));
@@ -309,7 +321,9 @@ body.read-only .fab { display: none; }
   display: flex;
   background: #fff;
   border-top: 1px solid var(--border);
-  z-index: 30;
+  z-index: 60;                   /* 헤더(50)·FAB(40)보다 위, dialog는 native top-layer라 별개 */
+  transform: translateZ(0);      /* iOS 합성 레이어 강제 → fixed 잔상 방지 */
+  -webkit-backdrop-filter: none;
 }
 .tab-btn {
   flex: 1;
@@ -399,6 +413,19 @@ body.read-only .fab { display: none; }
   align-self: flex-start;
 }
 .photo-add-btn:active { background: #f1f5f9; }
+.photo-add-btn .ocr-hint {
+  font-size: .72rem; color: var(--accent); margin-left: 4px;
+}
+.ocr-status {
+  margin-top: 8px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: .82rem;
+  background: var(--primary-bg);
+  color: var(--primary-dark);
+}
+.ocr-status.hidden { display: none; }
+.ocr-status.error { background: #fef2f2; color: var(--danger); }
 .photo-thumbs {
   display: flex; flex-wrap: wrap; gap: 8px;
   margin-top: 8px;

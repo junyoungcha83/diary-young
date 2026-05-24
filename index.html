@@ -134,9 +134,10 @@
     <!-- 사진 첨부 -->
     <div class="form-row">
       <label class="photo-add-btn">
-        📷 사진 추가
+        📷 사진 추가 <span class="ocr-hint">(첫 사진은 자동 인식)</span>
         <input type="file" id="fPhoto" accept="image/*" multiple hidden />
       </label>
+      <div class="ocr-status hidden" id="ocrStatus"></div>
       <div class="photo-thumbs" id="photoThumbs"></div>
     </div>
 

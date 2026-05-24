@@ -160,6 +160,60 @@ async function pushToServer() {
   }
 }
 
+function setOcrStatus(text, cls) {
+  const el = document.getElementById('ocrStatus');
+  if (!el) return;
+  el.className = 'ocr-status' + (cls ? ' ' + cls : '');
+  if (!text) { el.classList.add('hidden'); el.textContent = ''; return; }
+  el.classList.remove('hidden');
+  el.textContent = text;
+}
+
+// 첫 사진을 OCR 해서 폼 자동 채움. 사용자가 이미 입력한 값은 덮어쓰지 않음.
+async function ocrFirstPhoto(photo) {
+  const token = getEditToken();
+  if (!token) return;
+  setOcrStatus('🔍 사진에서 글·날짜 추출 중…');
+  try {
+    const res = await fetch(`${API_BASE}/api/ocr`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Edit-Token': token },
+      body: JSON.stringify({ image: photo.url }),
+    });
+    const out = await res.json().catch(() => null);
+    if (!res.ok || !out || !out.ok) {
+      setOcrStatus('✗ 자동 인식 실패 — 직접 입력해 주세요', 'error');
+      return;
+    }
+    const fDate = document.getElementById('fDate');
+    const fTitle = document.getElementById('fTitle');
+    const fContent = document.getElementById('fContent');
+    const fTags = document.getElementById('fTags');
+
+    // 이미 사용자가 입력했으면 덮어쓰지 않음
+    let filled = [];
+    if (out.date && /^\d{4}-\d{2}-\d{2}$/.test(out.date) && fDate.value === todayStr()) {
+      fDate.value = out.date;
+      filled.push('날짜');
+    }
+    if (out.title && !fTitle.value.trim()) { fTitle.value = out.title; filled.push('제목'); }
+    if (out.content && !fContent.value.trim()) { fContent.value = out.content; filled.push('본문'); }
+    if (out.tags && out.tags.length && !fTags.value.trim()) {
+      fTags.value = out.tags.join(', ');
+      filled.push('태그');
+    }
+    if (filled.length) {
+      setOcrStatus(`✓ ${filled.join('·')} 자동 입력됨 (확인·수정 가능)`);
+      setTimeout(() => setOcrStatus(''), 4000);
+    } else {
+      setOcrStatus('인식했지만 채울 항목 없음 (이미 입력된 값 보존)');
+      setTimeout(() => setOcrStatus(''), 3000);
+    }
+  } catch (e) {
+    setOcrStatus('✗ 네트워크 오류 — 직접 입력해 주세요', 'error');
+  }
+}
+
 async function fetchFromServer() {
   try {
     const res = await fetch(`${API_BASE}/api/data`, { cache: 'no-store' });
@@ -498,6 +552,7 @@ function openDiaryDialog(editId) {
     footer.classList.add('hidden');
   }
   renderPhotoThumbs();
+  setOcrStatus('');
   if (!dlg.open) dlg.showModal();
 
   // 편집 권한 없으면 입력 잠금 (열람만)
@@ -646,16 +701,26 @@ function bindUI() {
   document.getElementById('diaryDelete').onclick = deleteDiary;
   document.getElementById('fPhoto').addEventListener('change', async (e) => {
     const files = Array.from(e.target.files || []);
+    const wasEmpty = editingPhotos.length === 0;
+    const isNewEntry = !editEntryId;
+    let firstAdded = null;
     for (const f of files) {
       try {
         const p = await processPhotoFile(f);
-        if (p) editingPhotos.push(p);
+        if (p) {
+          editingPhotos.push(p);
+          if (!firstAdded) firstAdded = p;
+        }
       } catch (err) {
         alert('사진 처리 실패: ' + (err.message || err));
       }
     }
     e.target.value = '';
     renderPhotoThumbs();
+    // 새 일기 + 첫 사진 → OCR 자동 인식
+    if (firstAdded && wasEmpty && isNewEntry) {
+      ocrFirstPhoto(firstAdded);
+    }
   });
 
   // 사진 뷰어
