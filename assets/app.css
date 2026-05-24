@@ -426,6 +426,78 @@ body.read-only .fab { display: none; }
 }
 .ocr-status.hidden { display: none; }
 .ocr-status.error { background: #fef2f2; color: var(--danger); }
+
+/* ── 다중 일기 미리보기 ── */
+#multiSection.hidden { display: none; }
+.multi-header {
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: .9rem; font-weight: 600; color: var(--primary-dark);
+  padding: 4px 0;
+}
+.multi-list {
+  display: flex; flex-direction: column; gap: 10px;
+  margin-top: 4px;
+}
+.multi-card {
+  background: var(--card);
+  border: 1px solid var(--primary);
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: flex; flex-direction: column; gap: 6px;
+  position: relative;
+}
+.multi-card.excluded {
+  opacity: .45;
+  border-style: dashed;
+}
+.multi-card .head {
+  display: flex; align-items: center; gap: 8px;
+  font-size: .85rem; color: var(--muted);
+}
+.multi-card .head input[type="date"] {
+  flex: 1;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: .85rem;
+}
+.multi-card .head .weekday {
+  font-size: .75rem;
+  padding: 2px 8px;
+  background: var(--primary-bg);
+  color: var(--primary-dark);
+  border-radius: 99px;
+}
+.multi-card input.title-in,
+.multi-card textarea.content-in,
+.multi-card input.tags-in {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: .9rem;
+  width: 100%;
+}
+.multi-card textarea.content-in {
+  min-height: 80px;
+  resize: vertical;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+.multi-card .toggle-exclude {
+  position: absolute; top: 8px; right: 8px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: .72rem;
+  cursor: pointer;
+  color: var(--muted);
+}
+.multi-card.excluded .toggle-exclude {
+  background: var(--primary);
+  color: #fff;
+  border-color: var(--primary);
+}
 .photo-thumbs {
   display: flex; flex-wrap: wrap; gap: 8px;
   margin-top: 8px;

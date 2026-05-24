@@ -115,30 +115,49 @@
       <button type="submit" class="link-btn primary" id="diarySave">저장</button>
     </header>
 
-    <div class="form-row">
-      <label>날짜 <input type="date" id="fDate" /></label>
+    <!-- 연도 선택 — OCR 시 MM-DD 와 결합 -->
+    <div class="form-row" id="rowYear">
+      <label>연도 (사진의 일기들이 속한 해)
+        <input type="number" id="fYear" min="1900" max="2100" step="1" />
+      </label>
     </div>
 
-    <div class="form-row">
-      <input type="text" id="fTitle" placeholder="제목 (선택)" autocomplete="off" />
-    </div>
+    <!-- 단일 일기 입력 영역 — OCR이 N>1편 감지하면 숨기고 multi 영역만 보임 -->
+    <div id="singleEntrySection">
+      <div class="form-row">
+        <label>날짜 <input type="date" id="fDate" /></label>
+      </div>
 
-    <div class="form-row">
-      <textarea id="fContent" placeholder="오늘 어떤 하루였나요?" rows="10"></textarea>
-    </div>
+      <div class="form-row">
+        <input type="text" id="fTitle" placeholder="제목 (선택)" autocomplete="off" />
+      </div>
 
-    <div class="form-row">
-      <input type="text" id="fTags" placeholder="태그 (쉼표로 구분, 예: 가족, 여행)" autocomplete="off" />
+      <div class="form-row">
+        <textarea id="fContent" placeholder="오늘 어떤 하루였나요?" rows="10"></textarea>
+      </div>
+
+      <div class="form-row">
+        <input type="text" id="fTags" placeholder="태그 (쉼표로 구분, 예: 가족, 여행)" autocomplete="off" />
+      </div>
     </div>
 
     <!-- 사진 첨부 -->
     <div class="form-row">
       <label class="photo-add-btn">
-        📷 사진 추가 <span class="ocr-hint">(첫 사진은 자동 인식)</span>
+        📷 사진 추가 <span class="ocr-hint">(자동 인식)</span>
         <input type="file" id="fPhoto" accept="image/*" multiple hidden />
       </label>
       <div class="ocr-status hidden" id="ocrStatus"></div>
       <div class="photo-thumbs" id="photoThumbs"></div>
+    </div>
+
+    <!-- 다중 일기 미리보기 (OCR 결과 N>1편일 때) -->
+    <div class="form-row hidden" id="multiSection">
+      <div class="multi-header">
+        🔍 인식된 일기 <span id="multiCount">0</span>편 — 검토 후 저장
+        <button type="button" class="link-btn" id="btnMultiReset">단일 모드로</button>
+      </div>
+      <div class="multi-list" id="multiList"></div>
     </div>
 
     <div class="dialog-footer">

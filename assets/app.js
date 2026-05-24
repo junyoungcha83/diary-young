@@ -21,6 +21,7 @@ let viewMonth = monthKey(new Date());
 let selectedDate = todayStr();
 let editEntryId = null;
 let editingPhotos = [];   // 모달에서 편집 중인 photos 배열 (저장 시 entry.photos 로 커밋)
+let multiEntries = [];    // OCR이 N>1편 감지 시 — 각 원소 { date, weekday, title, content, tags, excluded }
 let searchQuery = '';
 let activeTagFilter = '';
 
@@ -169,16 +170,18 @@ function setOcrStatus(text, cls) {
   el.textContent = text;
 }
 
-// 첫 사진을 OCR 해서 폼 자동 채움. 사용자가 이미 입력한 값은 덮어쓰지 않음.
+// 사진을 OCR 해서 N편 (1편 또는 여러편) 으로 분리 — 사용자 선택 연도와 결합.
 async function ocrFirstPhoto(photo) {
   const token = getEditToken();
   if (!token) return;
-  setOcrStatus('🔍 사진에서 글·날짜 추출 중…');
+  const yearInput = document.getElementById('fYear');
+  const year = parseInt(yearInput.value, 10) || new Date().getFullYear();
+  setOcrStatus(`🔍 ${year}년 기준으로 사진에서 일자별 일기 추출 중…`);
   try {
     const res = await fetch(`${API_BASE}/api/ocr`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Edit-Token': token },
-      body: JSON.stringify({ image: photo.url }),
+      body: JSON.stringify({ image: photo.url, year }),
     });
     const out = await res.json().catch(() => null);
     if (!res.ok || !out || !out.ok) {
@@ -188,33 +191,93 @@ async function ocrFirstPhoto(photo) {
       console.warn('[ocr] failed', out);
       return;
     }
-    const fDate = document.getElementById('fDate');
-    const fTitle = document.getElementById('fTitle');
-    const fContent = document.getElementById('fContent');
-    const fTags = document.getElementById('fTags');
-
-    // 이미 사용자가 입력했으면 덮어쓰지 않음
-    let filled = [];
-    if (out.date && /^\d{4}-\d{2}-\d{2}$/.test(out.date) && fDate.value === todayStr()) {
-      fDate.value = out.date;
-      filled.push('날짜');
+    const entries = Array.isArray(out.entries) ? out.entries : [];
+    if (entries.length === 0) {
+      setOcrStatus('인식된 일기 없음 — 직접 입력해 주세요', 'error');
+      return;
     }
-    if (out.title && !fTitle.value.trim()) { fTitle.value = out.title; filled.push('제목'); }
-    if (out.content && !fContent.value.trim()) { fContent.value = out.content; filled.push('본문'); }
-    if (out.tags && out.tags.length && !fTags.value.trim()) {
-      fTags.value = out.tags.join(', ');
-      filled.push('태그');
-    }
-    if (filled.length) {
-      setOcrStatus(`✓ ${filled.join('·')} 자동 입력됨 (확인·수정 가능)`);
+    if (entries.length === 1) {
+      // 단일 편 — 기존처럼 단일 폼 채움
+      const e = entries[0];
+      const fDate = document.getElementById('fDate');
+      const fTitle = document.getElementById('fTitle');
+      const fContent = document.getElementById('fContent');
+      const fTags = document.getElementById('fTags');
+      let filled = [];
+      if (e.date && /^\d{4}-\d{2}-\d{2}$/.test(e.date) && fDate.value === todayStr()) {
+        fDate.value = e.date; filled.push('날짜');
+      }
+      if (e.title && !fTitle.value.trim()) { fTitle.value = e.title; filled.push('제목'); }
+      if (e.content && !fContent.value.trim()) { fContent.value = e.content; filled.push('본문'); }
+      if (e.tags && e.tags.length && !fTags.value.trim()) {
+        fTags.value = e.tags.join(', '); filled.push('태그');
+      }
+      setOcrStatus(filled.length ? `✓ ${filled.join('·')} 자동 입력됨 (확인·수정 가능)`
+                                  : '인식했지만 채울 항목 없음');
       setTimeout(() => setOcrStatus(''), 4000);
-    } else {
-      setOcrStatus('인식했지만 채울 항목 없음 (이미 입력된 값 보존)');
-      setTimeout(() => setOcrStatus(''), 3000);
+      return;
     }
+    // N편 — 다중 모드 진입
+    multiEntries = entries.map(e => ({
+      date: e.date || '',
+      weekday: e.weekday || '',
+      title: e.title || '',
+      content: e.content || '',
+      tags: Array.isArray(e.tags) ? e.tags : [],
+      excluded: false,
+    }));
+    enterMultiMode();
+    setOcrStatus(`✓ ${entries.length}편 인식됨 — 검토 후 저장`);
+    setTimeout(() => setOcrStatus(''), 3500);
   } catch (e) {
     setOcrStatus('✗ 네트워크 오류 — 직접 입력해 주세요', 'error');
   }
+}
+
+function enterMultiMode() {
+  document.getElementById('singleEntrySection').classList.add('hidden');
+  document.getElementById('multiSection').classList.remove('hidden');
+  document.getElementById('diaryDialogTitle').textContent = `여러 일기 가져오기`;
+  renderMultiEntries();
+}
+
+function exitMultiMode() {
+  multiEntries = [];
+  document.getElementById('singleEntrySection').classList.remove('hidden');
+  document.getElementById('multiSection').classList.add('hidden');
+  document.getElementById('diaryDialogTitle').textContent = editEntryId ? '일기 편집' : '새 일기';
+}
+
+function renderMultiEntries() {
+  const list = document.getElementById('multiList');
+  const count = document.getElementById('multiCount');
+  const active = multiEntries.filter(e => !e.excluded).length;
+  count.textContent = `${active} / ${multiEntries.length}`;
+  list.innerHTML = multiEntries.map((e, idx) => `
+    <div class="multi-card${e.excluded ? ' excluded' : ''}" data-idx="${idx}">
+      <button type="button" class="toggle-exclude">${e.excluded ? '포함' : '제외'}</button>
+      <div class="head">
+        <input type="date" class="date-in" value="${escapeAttr(e.date)}" />
+        ${e.weekday ? `<span class="weekday">${escapeHtml(e.weekday)}</span>` : ''}
+      </div>
+      <input type="text" class="title-in" placeholder="제목 (선택)" value="${escapeAttr(e.title)}" />
+      <textarea class="content-in" rows="4" placeholder="본문">${escapeHtml(e.content)}</textarea>
+      <input type="text" class="tags-in" placeholder="태그 (쉼표로 구분)" value="${escapeAttr(e.tags.join(', '))}" />
+    </div>
+  `).join('');
+  list.querySelectorAll('.multi-card').forEach(card => {
+    const idx = parseInt(card.dataset.idx, 10);
+    card.querySelector('.toggle-exclude').onclick = () => {
+      multiEntries[idx].excluded = !multiEntries[idx].excluded;
+      renderMultiEntries();
+    };
+    card.querySelector('.date-in').onchange = (ev) => { multiEntries[idx].date = ev.target.value; };
+    card.querySelector('.title-in').onchange = (ev) => { multiEntries[idx].title = ev.target.value; };
+    card.querySelector('.content-in').onchange = (ev) => { multiEntries[idx].content = ev.target.value; };
+    card.querySelector('.tags-in').onchange = (ev) => {
+      multiEntries[idx].tags = ev.target.value.split(/[,\s]+/).map(s => s.replace(/^#/, '').trim()).filter(Boolean);
+    };
+  });
 }
 
 async function fetchFromServer() {
@@ -527,7 +590,9 @@ function renderSettings() {
 function openDiaryDialog(editId) {
   if (!editId && !ensureEditable()) return;
   editEntryId = editId || null;
+  multiEntries = [];
   const dlg = document.getElementById('diaryDialog');
+  const fYear = document.getElementById('fYear');
   const fDate = document.getElementById('fDate');
   const fTitle = document.getElementById('fTitle');
   const fContent = document.getElementById('fContent');
@@ -535,10 +600,15 @@ function openDiaryDialog(editId) {
   const footer = dlg.querySelector('.dialog-footer');
   const title = document.getElementById('diaryDialogTitle');
 
+  // single 영역 보이게 (multi 잔존 방지)
+  document.getElementById('singleEntrySection').classList.remove('hidden');
+  document.getElementById('multiSection').classList.add('hidden');
+
   if (editEntryId) {
     const e = state.entries.find(x => x.id === editEntryId);
     if (!e) { editEntryId = null; return; }
     title.textContent = '일기 편집';
+    fYear.value = (e.date || '').slice(0, 4) || new Date().getFullYear();
     fDate.value = e.date || todayStr();
     fTitle.value = e.title || '';
     fContent.value = e.content || '';
@@ -547,7 +617,9 @@ function openDiaryDialog(editId) {
     footer.classList.remove('hidden');
   } else {
     title.textContent = '새 일기';
-    fDate.value = selectedDate || todayStr();
+    const baseDate = selectedDate || todayStr();
+    fYear.value = baseDate.slice(0, 4);
+    fDate.value = baseDate;
     fTitle.value = '';
     fContent.value = '';
     fTags.value = '';
@@ -560,7 +632,7 @@ function openDiaryDialog(editId) {
 
   // 편집 권한 없으면 입력 잠금 (열람만)
   const readOnly = !getEditToken();
-  [fDate, fTitle, fContent, fTags].forEach(el => { el.readOnly = readOnly; el.disabled = readOnly && el === fDate; });
+  [fDate, fTitle, fContent, fTags, fYear].forEach(el => { el.readOnly = readOnly; el.disabled = readOnly && (el === fDate || el === fYear); });
   document.getElementById('diarySave').style.display = readOnly ? 'none' : '';
   document.getElementById('fPhoto').disabled = readOnly;
   document.querySelector('.photo-add-btn').style.display = readOnly ? 'none' : '';
@@ -572,6 +644,7 @@ function closeDiaryDialog() {
   if (dlg.open) dlg.close();
   editEntryId = null;
   editingPhotos = [];
+  multiEntries = [];
 }
 
 function renderPhotoThumbs() {
@@ -595,6 +668,40 @@ function renderPhotoThumbs() {
 
 function saveDiary() {
   if (!ensureEditable()) return;
+
+  // 다중 모드 — multiEntries 중 excluded 아닌 것들 일괄 저장 (사진은 첨부 안 함)
+  if (multiEntries.length > 0) {
+    const toSave = multiEntries.filter(e => !e.excluded);
+    const invalid = toSave.filter(e => !e.date || !/^\d{4}-\d{2}-\d{2}$/.test(e.date) || (!e.content && !e.title));
+    if (invalid.length) {
+      alert(`${invalid.length}편의 항목에 날짜 또는 본문이 없습니다. 수정하거나 '제외' 처리하세요.`);
+      return;
+    }
+    if (!toSave.length) {
+      alert('저장할 일기가 없습니다. 최소 1편은 포함하세요.');
+      return;
+    }
+    const ts = nowIso();
+    for (const e of toSave) {
+      state.entries.push({
+        id: nextEntryId(),
+        date: e.date,
+        title: e.title || '',
+        content: e.content || '',
+        tags: e.tags || [],
+        photos: [],
+        created_at: ts,
+        updated_at: ts,
+      });
+    }
+    selectedDate = toSave[0].date;
+    saveLocal();
+    closeDiaryDialog();
+    render();
+    return;
+  }
+
+  // 단일 모드 — 기존 동작
   const date = document.getElementById('fDate').value || todayStr();
   const title = document.getElementById('fTitle').value.trim();
   const content = document.getElementById('fContent').value.trim();
@@ -699,6 +806,10 @@ function bindUI() {
 
   // 다이얼로그
   document.getElementById('diaryCancel').onclick = closeDiaryDialog;
+  document.getElementById('btnMultiReset').onclick = () => {
+    if (multiEntries.length && !confirm('인식된 일기 검토를 취소하고 단일 입력으로 돌아갈까요?')) return;
+    exitMultiMode();
+  };
   document.getElementById('diaryDialog').addEventListener('cancel', (e) => { e.preventDefault(); closeDiaryDialog(); });
   document.getElementById('diaryForm').addEventListener('submit', (e) => { e.preventDefault(); saveDiary(); });
   document.getElementById('diaryDelete').onclick = deleteDiary;

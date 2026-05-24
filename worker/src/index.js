@@ -28,28 +28,38 @@ function corsHeaders(req) {
   };
 }
 
-// Claude vision으로 일기 사진에서 날짜/내용 추출
-async function ocrDiaryPhoto(env, dataUrl) {
+// Claude vision으로 일기 사진에서 (여러) 날짜·내용 추출
+// 사용자가 지정한 year 와 결합해 YYYY-MM-DD 생성. year 가 없으면 MM-DD 만.
+async function ocrDiaryPhoto(env, dataUrl, year) {
   if (!env.ANTHROPIC_API_KEY) {
     return { error: 'ocr_not_configured', hint: 'Worker에 ANTHROPIC_API_KEY secret 설정 필요' };
   }
-  // data URL 에서 mime + base64 분리
   const m = /^data:(image\/[a-z+]+);base64,(.+)$/i.exec(dataUrl || '');
   if (!m) return { error: 'invalid_image' };
   const mediaType = m[1];
   const b64 = m[2];
 
+  const yearHint = (typeof year === 'number' && year >= 1900 && year <= 2100)
+    ? `이미지에 연도가 안 나와도, 사용자가 선택한 연도는 ${year}년입니다. 모든 일자는 이 연도로 가정하세요.`
+    : '이미지에 연도가 안 나오면 그 항목은 응답에서 빼세요.';
+
   const prompt =
-    '이 이미지는 일기장의 한 페이지 또는 일기로 쓰일 사진입니다. ' +
-    '다음을 JSON 형식으로만 응답하세요 (다른 설명·코드블록·마크다운 없이 순수 JSON):\n' +
+    '이 이미지는 한 장에 여러 날짜의 일기가 담긴 캡처일 수 있습니다. ' +
+    '이미지에서 식별 가능한 모든 날짜별로 일기를 분리하여, 순수 JSON 배열만 응답하세요 (설명·코드블록·마크다운 금지).\n' +
+    yearHint + '\n' +
+    '각 원소는 다음 형식:\n' +
     '{\n' +
-    '  "date": "YYYY-MM-DD 또는 빈 문자열 (페이지에서 날짜를 찾을 수 없으면)",\n' +
+    '  "date_md": "MM-DD 형식. 예: 12-03. 못 읽으면 빈 문자열",\n' +
     '  "weekday": "월요일/화요일/... 또는 빈 문자열",\n' +
-    '  "title": "페이지 제목이 보이면 적고 없으면 빈 문자열",\n' +
-    '  "content": "본문 텍스트. 손글씨도 최대한 그대로 옮겨 적되, 줄바꿈은 \\n 으로. 그림이 있으면 본문 끝에 [그림: 무엇무엇] 형태로 한 줄 덧붙이세요.",\n' +
+    '  "title": "그 날의 제목이 있으면 적고, 없으면 빈 문자열",\n' +
+    '  "content": "그 날의 본문. 손글씨도 그대로 옮기되, 줄바꿈은 \\n. 그림이 있으면 본문 끝에 [그림: 무엇] 한 줄.",\n' +
     '  "tags": ["감정·주제 키워드", "..."]\n' +
     '}\n' +
-    '날짜를 정확히 못 읽으면 date는 빈 문자열로 두세요. 추측하지 마세요.';
+    '규칙:\n' +
+    '- 날짜를 못 읽거나 본문이 비어있는 항목은 배열에서 제외하세요\n' +
+    '- 날짜 형식은 자유롭게 인식하세요 (12/3, 12.03, 12월 3일 등)\n' +
+    '- 일자가 하나만 있어도 길이 1인 배열로 반환\n' +
+    '- 시간 순서대로 정렬';
 
   const body = {
     model: 'claude-haiku-4-5-20251001',
@@ -91,14 +101,28 @@ async function ocrDiaryPhoto(env, dataUrl) {
       console.error('[ocr] parse failed', text.slice(0, 500));
       return { error: 'parse_failed', raw: text.slice(0, 500) };
     }
-    return {
-      ok: true,
-      date: typeof parsed.date === 'string' ? parsed.date : '',
-      weekday: typeof parsed.weekday === 'string' ? parsed.weekday : '',
-      title: typeof parsed.title === 'string' ? parsed.title : '',
-      content: typeof parsed.content === 'string' ? parsed.content : '',
-      tags: Array.isArray(parsed.tags) ? parsed.tags.filter(t => typeof t === 'string') : [],
-    };
+    // Claude 가 단일 객체로 응답한 경우(예전 포맷) 배열로 감쌈
+    const arr = Array.isArray(parsed) ? parsed : [parsed];
+    const validYear = (typeof year === 'number' && year >= 1900 && year <= 2100) ? year : null;
+    const entries = arr.map(e => {
+      const md = String(e.date_md || '').trim();
+      const mdMatch = /^(\d{1,2})[-/.](\d{1,2})$/.exec(md);
+      let date = '';
+      if (mdMatch && validYear) {
+        const mm = String(parseInt(mdMatch[1], 10)).padStart(2, '0');
+        const dd = String(parseInt(mdMatch[2], 10)).padStart(2, '0');
+        date = `${validYear}-${mm}-${dd}`;
+      }
+      return {
+        date,                                                                    // YYYY-MM-DD (없으면 빈 문자열)
+        date_md: md,
+        weekday: typeof e.weekday === 'string' ? e.weekday : '',
+        title: typeof e.title === 'string' ? e.title : '',
+        content: typeof e.content === 'string' ? e.content : '',
+        tags: Array.isArray(e.tags) ? e.tags.filter(t => typeof t === 'string') : [],
+      };
+    }).filter(e => e.content || e.title);
+    return { ok: true, entries };
   } catch (e) {
     return { error: 'fetch_failed', detail: String(e && e.message || e) };
   }
@@ -172,7 +196,8 @@ export default {
       if (!dataUrl.startsWith('data:image/')) {
         return json({ error: 'invalid_image' }, 400, cors);
       }
-      const result = await ocrDiaryPhoto(env, dataUrl);
+      const year = Number.isFinite(body.year) ? Math.trunc(body.year) : null;
+      const result = await ocrDiaryPhoto(env, dataUrl, year);
       const status = result.error ? 422 : 200;
       return json(result, status, cors);
     }
