@@ -333,6 +333,65 @@ async function ocrFirstPhoto(photo) {
   }
 }
 
+// 텍스트 파일을 서버에 보내 일자별 분리 — OCR 멀티모드와 동일한 UI 진입
+async function importTextFile(file) {
+  if (!ensureEditable()) return;
+  if (!file) return;
+  const token = getEditToken();
+  if (!token) return;
+  const yearInput = document.getElementById('fYear');
+  const year = parseInt(yearInput.value, 10) || new Date().getFullYear();
+
+  let text;
+  try {
+    text = await file.text();
+  } catch (e) {
+    setOcrStatus('✗ 파일 읽기 실패: ' + (e.message || e), 'error');
+    return;
+  }
+  if (!text.trim()) {
+    setOcrStatus('파일이 비어있어요', 'error');
+    return;
+  }
+  if (text.length > 200_000) {
+    setOcrStatus(`✗ 파일이 너무 큼 (${(text.length/1024).toFixed(0)}KB, 한도 200KB)`, 'error');
+    return;
+  }
+
+  setOcrStatus(`📄 ${year}년 기준으로 ${file.name} 일자별 분리 중…`);
+  try {
+    const res = await fetch(`${API_BASE}/api/parse-text`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Edit-Token': token },
+      body: JSON.stringify({ text, year }),
+    });
+    const out = await res.json().catch(() => null);
+    if (!res.ok || !out || !out.ok) {
+      const code = out && out.error ? out.error : `HTTP ${res.status}`;
+      const detail = out && (out.detail || out.raw || out.hint);
+      setOcrStatus(`✗ 텍스트 파싱 실패 (${code})${detail ? ' — ' + String(detail).slice(0, 80) : ''}`, 'error');
+      console.warn('[parse-text] failed', out);
+      return;
+    }
+    const entries = Array.isArray(out.entries) ? out.entries : [];
+    if (!entries.length) {
+      setOcrStatus('파싱된 일기 없음 — 텍스트에 날짜가 있는지 확인하세요', 'error');
+      return;
+    }
+    multiEntries = entries.map(e => ({
+      date: e.date || '', weekday: e.weekday || '',
+      title: e.title || '', content: e.content || '',
+      tags: Array.isArray(e.tags) ? e.tags : [],
+      photos: [], excluded: false,
+    }));
+    enterMultiMode();
+    setOcrStatus(`✓ ${entries.length}편 인식됨 — 검토 후 저장`);
+    setTimeout(() => setOcrStatus(''), 4000);
+  } catch (e) {
+    setOcrStatus('✗ 네트워크 오류 — 잠시 후 다시 시도', 'error');
+  }
+}
+
 function enterMultiMode() {
   document.getElementById('singleEntrySection').classList.add('hidden');
   document.getElementById('multiSection').classList.remove('hidden');
@@ -1003,6 +1062,12 @@ function bindUI() {
   ['fYear', 'fDate', 'fTitle', 'fContent', 'fTags'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.addEventListener('input', saveDraftDebounced);
+  });
+  document.getElementById('fTextFile').addEventListener('change', async (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    await importTextFile(file);
   });
   document.getElementById('fPhoto').addEventListener('change', async (e) => {
     const files = Array.from(e.target.files || []);

@@ -108,52 +108,121 @@ async function ocrDiaryPhoto(env, dataUrl, year) {
     const out = await res.json();
     const text = (out.content && out.content[0] && out.content[0].text || '').trim();
     console.log('[ocr] claude returned', text.slice(0, 500));
-    // JSON 추출 — Claude가 ```json 블록을 끼는 경우 방어
-    let jsonText = text;
-    const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-    if (fence) jsonText = fence[1].trim();
-    let parsed;
-    try { parsed = JSON.parse(jsonText); }
-    catch (e) {
-      console.error('[ocr] parse failed', text.slice(0, 500));
-      return { error: 'parse_failed', raw: text.slice(0, 500) };
+    return normalizeEntries(text, year);
+  } catch (e) {
+    return { error: 'fetch_failed', detail: String(e && e.message || e) };
+  }
+}
+
+// Claude 응답 텍스트(JSON 배열 또는 객체)를 정규화된 entries 배열로.
+// photo_bboxes 도 처리 — 텍스트 입력이면 항상 빈 배열.
+function normalizeEntries(text, year) {
+  let jsonText = text;
+  const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fence) jsonText = fence[1].trim();
+  let parsed;
+  try { parsed = JSON.parse(jsonText); }
+  catch (e) {
+    return { ok: false, error: 'parse_failed', raw: text.slice(0, 500) };
+  }
+  const arr = Array.isArray(parsed) ? parsed : [parsed];
+  const validYear = (typeof year === 'number' && year >= 1900 && year <= 2100) ? year : null;
+  const entries = arr.map(e => {
+    const md = String(e.date_md || '').trim();
+    const mdMatch = /^(\d{1,2})[-/.](\d{1,2})$/.exec(md);
+    let date = '';
+    if (mdMatch && validYear) {
+      const mm = String(parseInt(mdMatch[1], 10)).padStart(2, '0');
+      const dd = String(parseInt(mdMatch[2], 10)).padStart(2, '0');
+      date = `${validYear}-${mm}-${dd}`;
     }
-    // Claude 가 단일 객체로 응답한 경우(예전 포맷) 배열로 감쌈
-    const arr = Array.isArray(parsed) ? parsed : [parsed];
-    const validYear = (typeof year === 'number' && year >= 1900 && year <= 2100) ? year : null;
-    const entries = arr.map(e => {
-      const md = String(e.date_md || '').trim();
-      const mdMatch = /^(\d{1,2})[-/.](\d{1,2})$/.exec(md);
-      let date = '';
-      if (mdMatch && validYear) {
-        const mm = String(parseInt(mdMatch[1], 10)).padStart(2, '0');
-        const dd = String(parseInt(mdMatch[2], 10)).padStart(2, '0');
-        date = `${validYear}-${mm}-${dd}`;
-      }
-      // photo_bboxes 정규화 — 0~1 범위, 잘못된 값 필터
-      const bboxes = Array.isArray(e.photo_bboxes) ? e.photo_bboxes
-                   : Array.isArray(e.photo_bbox) ? [e.photo_bbox]  // 단수형도 호환
-                   : [];
-      const cleanBboxes = bboxes
-        .filter(b => Array.isArray(b) && b.length === 4 && b.every(n => typeof n === 'number' && isFinite(n)))
-        .map(([x, y, w, h]) => [
-          Math.max(0, Math.min(1, x)),
-          Math.max(0, Math.min(1, y)),
-          Math.max(0, Math.min(1, w)),
-          Math.max(0, Math.min(1, h)),
-        ])
-        .filter(([x, y, w, h]) => w > 0.02 && h > 0.02 && !(x === 0 && y === 0 && w >= 0.98 && h >= 0.98));  // 너무 작거나 전체이미지인 bbox 제외
-      return {
-        date,                                                                    // YYYY-MM-DD (없으면 빈 문자열)
-        date_md: md,
-        weekday: typeof e.weekday === 'string' ? e.weekday : '',
-        title: typeof e.title === 'string' ? e.title : '',
-        content: typeof e.content === 'string' ? e.content : '',
-        tags: Array.isArray(e.tags) ? e.tags.filter(t => typeof t === 'string') : [],
-        photo_bboxes: cleanBboxes,
-      };
-    }).filter(e => e.content || e.title || e.photo_bboxes.length);
-    return { ok: true, entries };
+    const bboxes = Array.isArray(e.photo_bboxes) ? e.photo_bboxes
+                 : Array.isArray(e.photo_bbox) ? [e.photo_bbox]
+                 : [];
+    const cleanBboxes = bboxes
+      .filter(b => Array.isArray(b) && b.length === 4 && b.every(n => typeof n === 'number' && isFinite(n)))
+      .map(([x, y, w, h]) => [
+        Math.max(0, Math.min(1, x)), Math.max(0, Math.min(1, y)),
+        Math.max(0, Math.min(1, w)), Math.max(0, Math.min(1, h)),
+      ])
+      .filter(([x, y, w, h]) => w > 0.02 && h > 0.02 && !(x === 0 && y === 0 && w >= 0.98 && h >= 0.98));
+    return {
+      date,
+      date_md: md,
+      weekday: typeof e.weekday === 'string' ? e.weekday : '',
+      title: typeof e.title === 'string' ? e.title : '',
+      content: typeof e.content === 'string' ? e.content : '',
+      tags: Array.isArray(e.tags) ? e.tags.filter(t => typeof t === 'string') : [],
+      photo_bboxes: cleanBboxes,
+    };
+  }).filter(e => e.content || e.title || e.photo_bboxes.length);
+  return { ok: true, entries };
+}
+
+// 텍스트 파일(여러 날짜 일기) 을 일자별로 분리 — 이미지가 아닌 텍스트 입력 버전
+async function parseTextDiary(env, text, year) {
+  if (!env.ANTHROPIC_API_KEY) {
+    return { error: 'ocr_not_configured', hint: 'Worker에 ANTHROPIC_API_KEY secret 설정 필요' };
+  }
+  if (!text || !text.trim()) return { error: 'empty_text' };
+
+  const yearHint = (typeof year === 'number' && year >= 1900 && year <= 2100)
+    ? `텍스트에 연도가 없어도, 사용자가 선택한 연도는 ${year}년입니다. 모든 일자는 이 연도로 가정하세요.`
+    : '텍스트에 연도가 없으면 그 항목은 응답에서 빼세요.';
+
+  const prompt =
+    '당신은 한글 일기 텍스트를 일자별로 정확히 분리하는 도우미입니다.\n' +
+    '\n' +
+    '【최우선 규칙】\n' +
+    '1. 본문 글자는 원문 그대로 옮기세요. 임의 교정 금지.\n' +
+    '2. 띄어쓰기·줄바꿈(\\n)·문장부호·이모지·숫자도 원문 그대로.\n' +
+    '3. 한 입력 안에 여러 날짜의 일기가 있을 수 있습니다. 각 날짜별로 분리하세요.\n' +
+    '4. 날짜 형식은 자유롭게 인식: 12/3, 12.3, 12월 3일, 2024-12-03, 12-03 (월) 등.\n' +
+    '5. 날짜를 못 읽거나 본문이 없는 항목은 결과에서 제외.\n' +
+    '\n' +
+    yearHint + '\n' +
+    '\n' +
+    '순수 JSON 배열만 응답 (설명·코드블록·마크다운 금지). 각 원소:\n' +
+    '{\n' +
+    '  "date_md": "MM-DD",\n' +
+    '  "weekday": "월요일/화요일/... 또는 빈 문자열",\n' +
+    '  "title": "그 날의 제목이 있으면, 없으면 빈 문자열",\n' +
+    '  "content": "그 날의 본문 (위 규칙 준수, 줄바꿈은 \\n)",\n' +
+    '  "tags": ["감정·주제 키워드"]\n' +
+    '}\n' +
+    '\n' +
+    '- 일자가 하나만 있어도 길이 1 배열\n' +
+    '- 시간 순서대로 정렬\n' +
+    '\n' +
+    '--- 일기 텍스트 시작 ---\n' +
+    text +
+    '\n--- 일기 텍스트 끝 ---';
+
+  const body = {
+    model: 'claude-haiku-4-5-20251001',
+    max_tokens: 4000,
+    messages: [{ role: 'user', content: prompt }],
+  };
+
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': env.ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const detail = await res.text();
+      console.error('[parse-text] anthropic error', res.status, detail.slice(0, 500));
+      return { error: 'anthropic_error', status: res.status, detail: detail.slice(0, 500) };
+    }
+    const out = await res.json();
+    const replyText = (out.content && out.content[0] && out.content[0].text || '').trim();
+    console.log('[parse-text] claude returned', replyText.slice(0, 500));
+    return normalizeEntries(replyText, year);
   } catch (e) {
     return { error: 'fetch_failed', detail: String(e && e.message || e) };
   }
@@ -229,6 +298,26 @@ export default {
       }
       const year = Number.isFinite(body.year) ? Math.trunc(body.year) : null;
       const result = await ocrDiaryPhoto(env, dataUrl, year);
+      const status = result.error ? 422 : 200;
+      return json(result, status, cors);
+    }
+
+    // 텍스트 파일 — 여러 날짜 일기를 일자별 entries 로 분리 (편집 토큰 필요)
+    if (url.pathname === '/api/parse-text' && req.method === 'POST') {
+      const token = req.headers.get('X-Edit-Token') || '';
+      if (!env.EDIT_TOKEN || token !== env.EDIT_TOKEN) {
+        return json({ error: 'unauthorized' }, 401, cors);
+      }
+      let body;
+      try { body = await req.json(); }
+      catch { return json({ error: 'invalid_json' }, 400, cors); }
+
+      const text = typeof body.text === 'string' ? body.text : '';
+      if (!text.trim()) return json({ error: 'empty_text' }, 400, cors);
+      if (text.length > 200_000) return json({ error: 'too_large', size: text.length, limit: 200_000 }, 413, cors);
+
+      const year = Number.isFinite(body.year) ? Math.trunc(body.year) : null;
+      const result = await parseTextDiary(env, text, year);
       const status = result.error ? 422 : 200;
       return json(result, status, cors);
     }

@@ -416,6 +416,10 @@ body.read-only .fab { display: none; }
 .photo-add-btn .ocr-hint {
   font-size: .72rem; color: var(--accent); margin-left: 4px;
 }
+.import-row {
+  display: flex; flex-wrap: wrap; gap: 8px;
+}
+.import-row .photo-add-btn { flex: 1 1 auto; }
 .ocr-status {
   margin-top: 8px;
   padding: 8px 12px;
