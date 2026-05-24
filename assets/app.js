@@ -217,6 +217,37 @@ function loadDraft() {
   return null;
 }
 
+// ── 뒤로가기 처리 — 모달/뷰어/탭을 이전 단계로 ──
+// 각 "깊은" UI 상태(모달·뷰어·비기본탭)에 진입할 때 history.pushState 로
+// 가짜 레이어를 쌓아두고, popstate(뒤로가기) 가 오면 그 레이어를 닫는다.
+function pushLayer(layer) {
+  history.pushState({ app: 'diary-young', layer }, '');
+}
+function popLayerIfMatches(layer) {
+  if (history.state && history.state.app === 'diary-young' && history.state.layer === layer) {
+    history.back();
+  }
+}
+function bindBackButton() {
+  window.addEventListener('popstate', () => {
+    const photoDlg = document.getElementById('photoViewer');
+    const diaryDlg = document.getElementById('diaryDialog');
+    if (photoDlg && photoDlg.open) {
+      photoDlg.close();
+      return;
+    }
+    if (diaryDlg && diaryDlg.open) {
+      closeDiaryDialog();
+      return;
+    }
+    if (activeTab !== 'diary') {
+      setActiveTab('diary', { fromBack: true });
+      return;
+    }
+    // 더 닫을 게 없으면 그대로 둠 (브라우저가 한 칸 뒤로 갔을 뿐)
+  });
+}
+
 function setOcrStatus(text, cls) {
   const el = document.getElementById('ocrStatus');
   if (!el) return;
@@ -753,7 +784,10 @@ function openDiaryDialog(editId) {
   }
   renderPhotoThumbs();
   setOcrStatus('');
-  if (!dlg.open) dlg.showModal();
+  if (!dlg.open) {
+    dlg.showModal();
+    pushLayer('diary-modal');
+  }
   saveDraftNow();
 
   // 편집 권한 없으면 입력 잠금 (열람만)
@@ -772,6 +806,7 @@ function closeDiaryDialog() {
   editingPhotos = [];
   multiEntries = [];
   clearDraft();
+  popLayerIfMatches('diary-modal');
 }
 
 function renderPhotoThumbs() {
@@ -877,7 +912,15 @@ function deleteDiary() {
 function openPhotoViewer(src) {
   const dlg = document.getElementById('photoViewer');
   document.getElementById('photoViewerImg').src = src;
-  if (!dlg.open) dlg.showModal();
+  if (!dlg.open) {
+    dlg.showModal();
+    pushLayer('photo-viewer');
+  }
+}
+function closePhotoViewer() {
+  const dlg = document.getElementById('photoViewer');
+  if (dlg.open) dlg.close();
+  popLayerIfMatches('photo-viewer');
 }
 
 // ── 데이터 내보내기/가져오기 ────────────────────
@@ -910,11 +953,25 @@ async function importJson(file) {
 }
 
 // ── 탭 ─────────────────────────────────────────
-function setActiveTab(tab) {
+function setActiveTab(tab, opts) {
+  const prev = activeTab;
   activeTab = tab;
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('hidden', p.dataset.tab !== tab));
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
   render();
+
+  // history 동기화 (뒤로가기로 들어온 경우엔 건드리지 않음)
+  if (opts && opts.fromBack) return;
+  const onDefault = tab === 'diary';
+  const wasOnDefault = prev === 'diary';
+  if (onDefault && !wasOnDefault) {
+    popLayerIfMatches('tab');
+  } else if (!onDefault && wasOnDefault) {
+    pushLayer('tab');
+  } else if (!onDefault && !wasOnDefault) {
+    // 비기본 탭끼리 전환 — 레이어 누적 대신 replace
+    history.replaceState({ app: 'diary-young', layer: 'tab' }, '');
+  }
 }
 
 // ── 부트스트랩 ───────────────────────────────────
@@ -973,16 +1030,11 @@ function bindUI() {
   });
 
   // 사진 뷰어
-  document.getElementById('photoClose').onclick = () => {
-    const dlg = document.getElementById('photoViewer');
-    if (dlg.open) dlg.close();
-  };
+  document.getElementById('photoClose').onclick = closePhotoViewer;
   document.getElementById('photoViewer').addEventListener('click', (e) => {
-    if (e.target.id === 'photoViewer') {
-      const dlg = document.getElementById('photoViewer');
-      if (dlg.open) dlg.close();
-    }
+    if (e.target.id === 'photoViewer') closePhotoViewer();
   });
+  document.getElementById('photoViewer').addEventListener('cancel', (e) => { e.preventDefault(); closePhotoViewer(); });
 
   // 검색
   const searchInput = document.getElementById('searchInput');
@@ -1038,7 +1090,7 @@ function restoreDraftIfAny() {
     footer.classList.add('hidden');
     document.getElementById('fYear').value = d.year || new Date().getFullYear();
     enterMultiMode();
-    if (!dlg.open) dlg.showModal();
+    if (!dlg.open) { dlg.showModal(); pushLayer('diary-modal'); }
     setOcrStatus('💾 이전 작업 복원됨');
     setTimeout(() => setOcrStatus(''), 3000);
   } else if (d.kind === 'single') {
@@ -1056,7 +1108,7 @@ function restoreDraftIfAny() {
     document.getElementById('fTags').value = d.tags || '';
     renderPhotoThumbs();
     if (editEntryId) footer.classList.remove('hidden'); else footer.classList.add('hidden');
-    if (!dlg.open) dlg.showModal();
+    if (!dlg.open) { dlg.showModal(); pushLayer('diary-modal'); }
     setOcrStatus('💾 이전 작업 복원됨');
     setTimeout(() => setOcrStatus(''), 3000);
   } else {
@@ -1066,6 +1118,7 @@ function restoreDraftIfAny() {
 
 async function bootstrap() {
   bindUI();
+  bindBackButton();
   updateEditUI();
   state = await loadInitial();
   viewMonth = monthKey(new Date());
