@@ -182,7 +182,10 @@ async function ocrFirstPhoto(photo) {
     });
     const out = await res.json().catch(() => null);
     if (!res.ok || !out || !out.ok) {
-      setOcrStatus('✗ 자동 인식 실패 — 직접 입력해 주세요', 'error');
+      const code = out && out.error ? out.error : `HTTP ${res.status}`;
+      const detail = out && (out.detail || out.raw || out.hint);
+      setOcrStatus(`✗ 자동 인식 실패 (${code})${detail ? ' — ' + String(detail).slice(0, 80) : ''}`, 'error');
+      console.warn('[ocr] failed', out);
       return;
     }
     const fDate = document.getElementById('fDate');

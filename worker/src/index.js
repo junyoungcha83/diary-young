@@ -75,17 +75,20 @@ async function ocrDiaryPhoto(env, dataUrl) {
     });
     if (!res.ok) {
       const text = await res.text();
+      console.error('[ocr] anthropic error', res.status, text.slice(0, 500));
       return { error: 'anthropic_error', status: res.status, detail: text.slice(0, 500) };
     }
     const out = await res.json();
     const text = (out.content && out.content[0] && out.content[0].text || '').trim();
+    console.log('[ocr] claude returned', text.slice(0, 500));
     // JSON 추출 — Claude가 ```json 블록을 끼는 경우 방어
     let jsonText = text;
     const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/);
     if (fence) jsonText = fence[1].trim();
     let parsed;
     try { parsed = JSON.parse(jsonText); }
-    catch {
+    catch (e) {
+      console.error('[ocr] parse failed', text.slice(0, 500));
       return { error: 'parse_failed', raw: text.slice(0, 500) };
     }
     return {
