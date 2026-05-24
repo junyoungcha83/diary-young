@@ -1,0 +1,9 @@
+name = "diary-young-api"
+main = "src/index.js"
+compatibility_date = "2024-12-01"
+
+# KV namespace 는 첫 배포 전에 `wrangler kv namespace create DIARY` 로 만들고
+# 출력된 id 를 아래 id 값으로 채워야 합니다.
+[[kv_namespaces]]
+binding = "DIARY"
+id = "faf3e74d317b49c3b2fc7ccaf3cbb480"

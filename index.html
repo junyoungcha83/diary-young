@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
+<title>일기</title>
+<link rel="stylesheet" href="assets/app.css" />
+
+<!-- PWA -->
+<link rel="manifest" href="manifest.webmanifest" />
+<meta name="theme-color" content="#7c3aed" />
+<link rel="icon" type="image/svg+xml" href="assets/icon.svg" />
+
+<!-- iOS Safari 홈 화면 추가 -->
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="default" />
+<meta name="apple-mobile-web-app-title" content="일기" />
+<link rel="apple-touch-icon" href="assets/icon.svg" />
+</head>
+<body>
+
+<!-- 상단 헤더 (월 선택 + 동기화 상태) -->
+<header class="app-header">
+  <div class="month-nav">
+    <button class="icon-btn" id="btnPrevMonth" aria-label="이전 달">‹</button>
+    <button class="month-label" id="monthLabel" aria-label="월 선택">2026년 5월</button>
+    <button class="icon-btn" id="btnNextMonth" aria-label="다음 달">›</button>
+  </div>
+  <div class="header-right">
+    <span class="sync-status" id="syncStatus"></span>
+    <button class="icon-btn" id="btnEdit" title="편집 잠금/해제" aria-label="편집">🔒</button>
+  </div>
+</header>
+
+<!-- 메인 (탭별 화면) -->
+<main class="app-main">
+  <!-- ── 탭 1: 일기 (캘린더 + 선택일 일기 목록) ── -->
+  <section class="tab-panel" id="tabDiary" data-tab="diary">
+    <div class="calendar" id="calendar"></div>
+
+    <h2 class="section-title">
+      <span id="selectedDateLabel">오늘</span>
+      <span class="title-count" id="dayCount"></span>
+    </h2>
+    <div class="diary-list" id="diaryList"></div>
+  </section>
+
+  <!-- ── 탭 2: 검색 ── -->
+  <section class="tab-panel hidden" id="tabSearch" data-tab="search">
+    <div class="search-bar">
+      <input type="text" id="searchInput" placeholder="제목·본문·태그로 검색" autocomplete="off" />
+      <button class="icon-btn" id="btnClearSearch" aria-label="지우기">×</button>
+    </div>
+
+    <h2 class="section-title">
+      <span>태그</span>
+      <span class="title-count" id="tagsCount"></span>
+    </h2>
+    <div class="tag-cloud" id="tagCloud"></div>
+
+    <h2 class="section-title">
+      <span>결과</span>
+      <span class="title-count" id="searchCount"></span>
+    </h2>
+    <div class="diary-list" id="searchResults"></div>
+  </section>
+
+  <!-- ── 탭 3: 설정 ── -->
+  <section class="tab-panel hidden" id="tabSettings" data-tab="settings">
+
+    <div class="settings-group">
+      <h3>편집 권한</h3>
+      <p class="muted">편집 비밀번호가 있어야 일기를 추가/수정/삭제할 수 있습니다.</p>
+      <button class="btn" id="btnTokenEdit">편집 비밀번호 설정/변경</button>
+    </div>
+
+    <div class="settings-group">
+      <h3>데이터</h3>
+      <div class="data-buttons">
+        <button class="btn secondary" id="btnExport">JSON 내보내기</button>
+        <label class="btn secondary" style="cursor:pointer;">
+          JSON 불러오기
+          <input type="file" id="fileImport" accept="application/json" hidden />
+        </label>
+        <button class="btn secondary" id="btnRefresh">서버에서 새로고침</button>
+      </div>
+      <p class="muted small" id="storageHint"></p>
+    </div>
+
+  </section>
+</main>
+
+<!-- 입력 FAB -->
+<button class="fab" id="btnAdd" aria-label="일기 추가">＋</button>
+
+<!-- 하단 탭바 -->
+<nav class="tab-bar">
+  <button class="tab-btn active" data-tab="diary" aria-label="일기">
+    <span class="tab-ico">📖</span><span class="tab-label">일기</span>
+  </button>
+  <button class="tab-btn" data-tab="search" aria-label="검색">
+    <span class="tab-ico">🔍</span><span class="tab-label">검색</span>
+  </button>
+  <button class="tab-btn" data-tab="settings" aria-label="설정">
+    <span class="tab-ico">⚙️</span><span class="tab-label">설정</span>
+  </button>
+</nav>
+
+<!-- 입력 모달 -->
+<dialog class="diary-dialog" id="diaryDialog">
+  <form method="dialog" class="diary-form" id="diaryForm">
+    <header class="dialog-header">
+      <button type="button" class="link-btn" id="diaryCancel">취소</button>
+      <h3 id="diaryDialogTitle">새 일기</h3>
+      <button type="submit" class="link-btn primary" id="diarySave">저장</button>
+    </header>
+
+    <div class="form-row">
+      <label>날짜 <input type="date" id="fDate" /></label>
+    </div>
+
+    <div class="form-row">
+      <input type="text" id="fTitle" placeholder="제목 (선택)" autocomplete="off" />
+    </div>
+
+    <div class="form-row">
+      <textarea id="fContent" placeholder="오늘 어떤 하루였나요?" rows="10"></textarea>
+    </div>
+
+    <div class="form-row">
+      <input type="text" id="fTags" placeholder="태그 (쉼표로 구분, 예: 가족, 여행)" autocomplete="off" />
+    </div>
+
+    <!-- 사진 첨부 -->
+    <div class="form-row">
+      <label class="photo-add-btn">
+        📷 사진 추가
+        <input type="file" id="fPhoto" accept="image/*" multiple hidden />
+      </label>
+      <div class="photo-thumbs" id="photoThumbs"></div>
+    </div>
+
+    <div class="dialog-footer">
+      <button type="button" class="btn danger ghost" id="diaryDelete">삭제</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- 사진 뷰어 모달 -->
+<dialog class="photo-viewer" id="photoViewer">
+  <button type="button" class="photo-close" id="photoClose" aria-label="닫기">×</button>
+  <img id="photoViewerImg" alt="" />
+</dialog>
+
+<script src="assets/app.js"></script>
+<script>
+  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('sw.js').catch(() => {});
+    });
+  }
+</script>
+</body>
+</html>
