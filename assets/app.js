@@ -175,7 +175,7 @@ function snapshotDraft() {
       year: parseInt(document.getElementById('fYear').value, 10) || null,
       editEntryId,
       multiEntries: multiEntries.map(e => ({
-        date: e.date, weekday: e.weekday, title: e.title, content: e.content,
+        date: e.date, weekday: e.weekday, content: e.content,
         tags: e.tags.slice(), photos: e.photos.map(p => ({ id: p.id, url: p.url })),
         excluded: !!e.excluded,
       })),
@@ -186,7 +186,6 @@ function snapshotDraft() {
     editEntryId,
     year: parseInt(document.getElementById('fYear').value, 10) || null,
     date: document.getElementById('fDate').value,
-    title: document.getElementById('fTitle').value,
     content: document.getElementById('fContent').value,
     tags: document.getElementById('fTags').value,
     editingPhotos: editingPhotos.map(p => ({ id: p.id, url: p.url })),
@@ -287,14 +286,12 @@ async function ocrFirstPhoto(photo) {
       // 단일 편 — 기존처럼 단일 폼 채움
       const e = entries[0];
       const fDate = document.getElementById('fDate');
-      const fTitle = document.getElementById('fTitle');
       const fContent = document.getElementById('fContent');
       const fTags = document.getElementById('fTags');
       let filled = [];
       if (e.date && /^\d{4}-\d{2}-\d{2}$/.test(e.date) && fDate.value === todayStr()) {
         fDate.value = e.date; filled.push('날짜');
       }
-      if (e.title && !fTitle.value.trim()) { fTitle.value = e.title; filled.push('제목'); }
       if (e.content && !fContent.value.trim()) { fContent.value = e.content; filled.push('본문'); }
       if (e.tags && e.tags.length && !fTags.value.trim()) {
         fTags.value = e.tags.join(', '); filled.push('태그');
@@ -318,7 +315,6 @@ async function ocrFirstPhoto(photo) {
       return {
         date: e.date || '',
         weekday: e.weekday || '',
-        title: e.title || '',
         content: e.content || '',
         tags: Array.isArray(e.tags) ? e.tags : [],
         photos,
@@ -380,7 +376,7 @@ async function importTextFile(file) {
     }
     multiEntries = entries.map(e => ({
       date: e.date || '', weekday: e.weekday || '',
-      title: e.title || '', content: e.content || '',
+      content: e.content || '',
       tags: Array.isArray(e.tags) ? e.tags : [],
       photos: [], excluded: false,
     }));
@@ -432,7 +428,6 @@ function renderMultiEntries() {
           <input type="date" class="date-in" value="${escapeAttr(e.date)}" />
           ${e.weekday ? `<span class="weekday">${escapeHtml(e.weekday)}</span>` : ''}
         </div>
-        <input type="text" class="title-in" placeholder="제목 (선택)" value="${escapeAttr(e.title)}" />
         <textarea class="content-in" rows="4" placeholder="본문">${escapeHtml(e.content)}</textarea>
         <input type="text" class="tags-in" placeholder="태그 (쉼표로 구분)" value="${escapeAttr(e.tags.join(', '))}" />
         ${photosHtml}
@@ -447,7 +442,6 @@ function renderMultiEntries() {
       saveDraftDebounced();
     };
     card.querySelector('.date-in').onchange = (ev) => { multiEntries[idx].date = ev.target.value; saveDraftDebounced(); };
-    card.querySelector('.title-in').onchange = (ev) => { multiEntries[idx].title = ev.target.value; saveDraftDebounced(); };
     card.querySelector('.content-in').onchange = (ev) => { multiEntries[idx].content = ev.target.value; saveDraftDebounced(); };
     card.querySelector('.tags-in').onchange = (ev) => {
       multiEntries[idx].tags = ev.target.value.split(/[,\s]+/).map(s => s.replace(/^#/, '').trim()).filter(Boolean);
@@ -701,9 +695,6 @@ function renderDayList() {
 }
 
 function diaryCardHtml(e) {
-  const title = e.title
-    ? `<div class="title">${escapeHtml(e.title)}</div>`
-    : `<div class="title untitled">(제목 없음)</div>`;
   const tags = (e.tags || []).length
     ? `<div class="tags">${e.tags.map(t => `<span class="tag">#${escapeHtml(t)}</span>`).join('')}</div>`
     : '';
@@ -712,11 +703,10 @@ function diaryCardHtml(e) {
     : '';
   const content = e.content
     ? `<div class="content">${escapeHtml(e.content)}</div>`
-    : '';
+    : `<div class="content muted">(내용 없음)</div>`;
   return `
     <article class="diary-card" data-id="${escapeAttr(e.id)}">
       <div class="card-head">
-        ${title}
         <span class="date">${escapeHtml(fmtDate(e.date))}</span>
       </div>
       ${content}
@@ -809,7 +799,6 @@ function openDiaryDialog(editId) {
   const dlg = document.getElementById('diaryDialog');
   const fYear = document.getElementById('fYear');
   const fDate = document.getElementById('fDate');
-  const fTitle = document.getElementById('fTitle');
   const fContent = document.getElementById('fContent');
   const fTags = document.getElementById('fTags');
   const footer = dlg.querySelector('.dialog-footer');
@@ -825,7 +814,6 @@ function openDiaryDialog(editId) {
     title.textContent = '일기 편집';
     fYear.value = (e.date || '').slice(0, 4) || new Date().getFullYear();
     fDate.value = e.date || todayStr();
-    fTitle.value = e.title || '';
     fContent.value = e.content || '';
     fTags.value = (e.tags || []).join(', ');
     editingPhotos = (e.photos || []).map(p => ({ id: p.id, url: p.url }));
@@ -835,7 +823,6 @@ function openDiaryDialog(editId) {
     const baseDate = selectedDate || todayStr();
     fYear.value = baseDate.slice(0, 4);
     fDate.value = baseDate;
-    fTitle.value = '';
     fContent.value = '';
     fTags.value = '';
     editingPhotos = [];
@@ -851,7 +838,7 @@ function openDiaryDialog(editId) {
 
   // 편집 권한 없으면 입력 잠금 (열람만)
   const readOnly = !getEditToken();
-  [fDate, fTitle, fContent, fTags, fYear].forEach(el => { el.readOnly = readOnly; el.disabled = readOnly && (el === fDate || el === fYear); });
+  [fDate, fContent, fTags, fYear].forEach(el => { el.readOnly = readOnly; el.disabled = readOnly && (el === fDate || el === fYear); });
   document.getElementById('diarySave').style.display = readOnly ? 'none' : '';
   document.getElementById('fPhoto').disabled = readOnly;
   document.querySelector('.photo-add-btn').style.display = readOnly ? 'none' : '';
@@ -894,7 +881,7 @@ function saveDiary() {
   // 다중 모드 — multiEntries 중 excluded 아닌 것들 일괄 저장 (사진은 첨부 안 함)
   if (multiEntries.length > 0) {
     const toSave = multiEntries.filter(e => !e.excluded);
-    const invalid = toSave.filter(e => !e.date || !/^\d{4}-\d{2}-\d{2}$/.test(e.date) || (!e.content && !e.title));
+    const invalid = toSave.filter(e => !e.date || !/^\d{4}-\d{2}-\d{2}$/.test(e.date) || !e.content);
     if (invalid.length) {
       alert(`${invalid.length}편의 항목에 날짜 또는 본문이 없습니다. 수정하거나 '제외' 처리하세요.`);
       return;
@@ -908,7 +895,6 @@ function saveDiary() {
       state.entries.push({
         id: nextEntryId(),
         date: e.date,
-        title: e.title || '',
         content: e.content || '',
         tags: e.tags || [],
         photos: (e.photos || []).slice(),
@@ -925,13 +911,12 @@ function saveDiary() {
 
   // 단일 모드 — 기존 동작
   const date = document.getElementById('fDate').value || todayStr();
-  const title = document.getElementById('fTitle').value.trim();
   const content = document.getElementById('fContent').value.trim();
   const tagsRaw = document.getElementById('fTags').value;
   const tags = tagsRaw.split(/[,\s]+/).map(s => s.replace(/^#/, '').trim()).filter(Boolean);
 
-  if (!content && !title && !editingPhotos.length) {
-    alert('제목, 본문, 사진 중 하나는 있어야 합니다.');
+  if (!content && !editingPhotos.length) {
+    alert('본문 또는 사진은 있어야 합니다.');
     return;
   }
 
@@ -939,15 +924,15 @@ function saveDiary() {
     const e = state.entries.find(x => x.id === editEntryId);
     if (!e) return;
     e.date = date;
-    e.title = title;
     e.content = content;
     e.tags = tags;
     e.photos = editingPhotos.slice();
     e.updated_at = nowIso();
+    delete e.title;   // 옛 데이터에 남아있던 title 제거 (필드 자체 삭제)
   } else {
     state.entries.push({
       id: nextEntryId(),
-      date, title, content, tags,
+      date, content, tags,
       photos: editingPhotos.slice(),
       created_at: nowIso(),
       updated_at: nowIso(),
@@ -1059,7 +1044,7 @@ function bindUI() {
   document.getElementById('diaryDelete').onclick = deleteDiary;
 
   // 단일 모드 입력 — 드래프트 자동 저장
-  ['fYear', 'fDate', 'fTitle', 'fContent', 'fTags'].forEach(id => {
+  ['fYear', 'fDate', 'fContent', 'fTags'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.addEventListener('input', saveDraftDebounced);
   });
@@ -1145,7 +1130,7 @@ function restoreDraftIfAny() {
     editingPhotos = [];
     multiEntries = d.multiEntries.map(e => ({
       date: e.date || '', weekday: e.weekday || '',
-      title: e.title || '', content: e.content || '',
+      content: e.content || '',
       tags: Array.isArray(e.tags) ? e.tags.slice() : [],
       photos: Array.isArray(e.photos) ? e.photos.map(p => ({ id: p.id, url: p.url })) : [],
       excluded: !!e.excluded,
@@ -1168,7 +1153,6 @@ function restoreDraftIfAny() {
     document.getElementById('diaryDialogTitle').textContent = editEntryId ? '일기 편집' : '새 일기';
     document.getElementById('fYear').value = d.year || new Date().getFullYear();
     document.getElementById('fDate').value = d.date || todayStr();
-    document.getElementById('fTitle').value = d.title || '';
     document.getElementById('fContent').value = d.content || '';
     document.getElementById('fTags').value = d.tags || '';
     renderPhotoThumbs();
