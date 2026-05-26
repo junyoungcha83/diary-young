@@ -65,7 +65,22 @@
     <div class="diary-list" id="searchResults"></div>
   </section>
 
-  <!-- ── 탭 3: 설정 ── -->
+  <!-- ── 탭 3: 요약 (월별 블로그형 뷰) ── -->
+  <section class="tab-panel hidden" id="tabSummary" data-tab="summary">
+    <div class="summary-controls">
+      <label>연도 <input type="number" id="summaryYear" min="1900" max="2100" step="1" /></label>
+      <label>월 <select id="summaryMonth">
+        <option value="1">1월</option><option value="2">2월</option><option value="3">3월</option>
+        <option value="4">4월</option><option value="5">5월</option><option value="6">6월</option>
+        <option value="7">7월</option><option value="8">8월</option><option value="9">9월</option>
+        <option value="10">10월</option><option value="11">11월</option><option value="12">12월</option>
+      </select></label>
+    </div>
+    <div class="summary-stats muted" id="summaryStats"></div>
+    <div class="summary-feed" id="summaryFeed"></div>
+  </section>
+
+  <!-- ── 탭 4: 설정 ── -->
   <section class="tab-panel hidden" id="tabSettings" data-tab="settings">
 
     <div class="settings-group">
@@ -100,6 +115,9 @@
   </button>
   <button class="tab-btn" data-tab="search" aria-label="검색">
     <span class="tab-ico">🔍</span><span class="tab-label">검색</span>
+  </button>
+  <button class="tab-btn" data-tab="summary" aria-label="요약">
+    <span class="tab-ico">📰</span><span class="tab-label">요약</span>
   </button>
   <button class="tab-btn" data-tab="settings" aria-label="설정">
     <span class="tab-ico">⚙️</span><span class="tab-label">설정</span>

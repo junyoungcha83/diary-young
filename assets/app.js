@@ -611,6 +611,7 @@ function render() {
   renderCalendar();
   if (activeTab === 'diary')    renderDayList();
   if (activeTab === 'search')   renderSearch();
+  if (activeTab === 'summary')  renderSummary();
   if (activeTab === 'settings') renderSettings();
 }
 
@@ -776,6 +777,79 @@ function renderSearch() {
   }
   results.innerHTML = filtered.map(diaryCardHtml).join('');
   bindCardClicks(results);
+}
+
+// 요약 탭 — 연·월 선택 → 그 달의 entry 를 일자 내림차순(최신부터) 으로 블로그형 피드
+function renderSummary() {
+  const yEl = document.getElementById('summaryYear');
+  const mEl = document.getElementById('summaryMonth');
+  // 초기값/유효성 — 비어있으면 viewMonth 따라감
+  const [vy, vm] = viewMonth.split('-');
+  if (!yEl.value) yEl.value = vy;
+  if (!mEl.value) mEl.value = String(parseInt(vm, 10));
+
+  const y = parseInt(yEl.value, 10);
+  const m = parseInt(mEl.value, 10);
+  const mk = (Number.isFinite(y) && Number.isFinite(m))
+    ? `${y}-${String(m).padStart(2,'0')}`
+    : viewMonth;
+
+  const entries = state.entries
+    .filter(e => (e.date || '').slice(0, 7) === mk)
+    .slice()
+    .sort((a, b) => {
+      // 날짜 내림차순 → 같은 날이면 created_at 내림차순
+      const dc = (b.date || '').localeCompare(a.date || '');
+      if (dc !== 0) return dc;
+      return (b.created_at || '').localeCompare(a.created_at || '');
+    });
+
+  const stats = document.getElementById('summaryStats');
+  const photoCount = entries.reduce((s, e) => s + (e.photos || []).length, 0);
+  stats.textContent = entries.length
+    ? `${fmtMonth(mk)} · 일기 ${entries.length}편 · 사진 ${photoCount}장`
+    : `${fmtMonth(mk)} · 일기 없음`;
+
+  const feed = document.getElementById('summaryFeed');
+  if (!entries.length) {
+    feed.innerHTML = `<div class="diary-empty">이 달엔 일기가 없어요.</div>`;
+    return;
+  }
+  feed.innerHTML = entries.map(e => {
+    const tags = (e.tags || []).length
+      ? `<div class="tags">${e.tags.map(t => `<span class="tag">#${escapeHtml(t)}</span>`).join('')}</div>`
+      : '';
+    const photos = (e.photos || []).length
+      ? `<div class="summary-photos">${e.photos.map(p => `<img src="${escapeAttr(p.url)}" alt="" loading="lazy" />`).join('')}</div>`
+      : '';
+    const content = e.content
+      ? `<div class="summary-content">${escapeHtml(e.content)}</div>`
+      : '';
+    return `
+      <article class="summary-post" data-id="${escapeAttr(e.id)}">
+        <header class="summary-post-head">
+          <time class="summary-date">${escapeHtml(fmtDateLong(e.date))}</time>
+        </header>
+        ${content}
+        ${photos}
+        ${tags}
+      </article>
+    `;
+  }).join('');
+
+  feed.querySelectorAll('.summary-post').forEach(post => {
+    post.querySelectorAll('img').forEach(img => {
+      img.onclick = (ev) => {
+        ev.stopPropagation();
+        openPhotoViewer(img.src);
+      };
+    });
+    // 카드 자체 클릭 → 편집 다이얼로그 (read-only면 열람만)
+    post.addEventListener('click', (ev) => {
+      if (ev.target.tagName === 'IMG') return;
+      openDiaryDialog(post.dataset.id);
+    });
+  });
 }
 
 function renderSettings() {
@@ -1032,6 +1106,12 @@ function bindUI() {
   document.querySelectorAll('.tab-btn').forEach(b => {
     b.onclick = () => setActiveTab(b.dataset.tab);
   });
+
+  // 요약 탭 — 연·월 변경 시 재렌더
+  const sy = document.getElementById('summaryYear');
+  const sm = document.getElementById('summaryMonth');
+  if (sy) sy.addEventListener('change', renderSummary);
+  if (sm) sm.addEventListener('change', renderSummary);
 
   // 다이얼로그
   document.getElementById('diaryCancel').onclick = closeDiaryDialog;

@@ -215,6 +215,90 @@ input, textarea { font-family: inherit; font-size: 16px; }
   font-size: .9rem;
 }
 
+/* ── 요약 (블로그형 월별 피드) ── */
+#tabSummary { max-width: 100%; }
+.summary-controls {
+  display: flex; gap: 10px;
+  align-items: flex-end;
+  margin-bottom: 12px;
+}
+.summary-controls label {
+  display: flex; flex-direction: column; gap: 4px;
+  font-size: .78rem; color: var(--muted);
+  flex: 1; min-width: 0;
+}
+.summary-controls input,
+.summary-controls select {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--text);
+  font-family: inherit;
+  font-size: .95rem;
+}
+.summary-stats {
+  font-size: .82rem;
+  margin: 0 2px 12px;
+}
+.summary-feed {
+  display: flex; flex-direction: column; gap: 16px;
+}
+.summary-post {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px 18px;
+  cursor: pointer;
+  max-width: 100%;
+  overflow: hidden;
+  transition: box-shadow .15s ease;
+}
+.summary-post:active { background: #fafafa; }
+.summary-post-head {
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.summary-post .summary-date {
+  font-size: .92rem; font-weight: 700; color: var(--primary-dark);
+  font-variant-numeric: tabular-nums;
+}
+.summary-post .summary-content {
+  font-size: .95rem;
+  line-height: 1.65;
+  color: #1f2937;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin-bottom: 10px;
+}
+.summary-post .summary-photos {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+  margin-bottom: 8px;
+}
+.summary-post .summary-photos img {
+  width: 100%;
+  aspect-ratio: 4/3;
+  object-fit: cover;
+  border-radius: 8px;
+  display: block;
+  cursor: zoom-in;
+}
+.summary-post .tags {
+  display: flex; flex-wrap: wrap; gap: 4px;
+  margin-top: 8px;
+}
+.summary-post .tag {
+  font-size: .72rem;
+  padding: 2px 8px;
+  background: var(--primary-bg);
+  color: var(--primary-dark);
+  border-radius: 99px;
+}
+
 /* ── 검색 ── */
 #tabSearch { max-width: 100%; }
 .search-bar {
