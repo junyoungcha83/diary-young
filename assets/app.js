@@ -950,6 +950,18 @@ function openDiaryDialog(editId, opts) {
   document.getElementById('fPhoto').disabled = viewOnly;
   document.querySelector('.photo-add-btn').style.display = viewOnly ? 'none' : '';
 
+  // 보기 전용일 때 — <input type="date"> 가 일부 모바일 브라우저에서 빈칸으로
+  // 보이는 문제 대응을 위해 같은 자리에 텍스트 라벨을 함께 노출하고 input 은 숨김.
+  const fDateText = document.getElementById('fDateText');
+  if (viewOnly && fDate.value) {
+    fDateText.textContent = fmtDateLong(fDate.value);
+    fDateText.hidden = false;
+    fDate.style.display = 'none';
+  } else {
+    fDateText.hidden = true;
+    fDate.style.display = '';
+  }
+
   // 푸터 — 요약 출처면 삭제 숨기고 바로가기 노출. 그 외엔 기존 동작 유지.
   if (source === 'summary' && editEntryId) {
     footer.classList.remove('hidden');

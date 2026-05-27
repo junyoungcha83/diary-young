@@ -145,7 +145,10 @@
     <!-- 단일 일기 입력 영역 — OCR이 N>1편 감지하면 숨기고 multi 영역만 보임 -->
     <div id="singleEntrySection">
       <div class="form-row">
-        <label>날짜 <input type="date" id="fDate" /></label>
+        <label>날짜
+          <input type="date" id="fDate" />
+          <span class="form-readonly-text" id="fDateText" hidden></span>
+        </label>
       </div>
 
       <div class="form-row">
