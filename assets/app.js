@@ -476,6 +476,10 @@ async function fetchFromServer() {
 // 서버에서 최신 state 를 받아 화면에 반영. manual=true 면 사용자가 직접 누른 경우
 // (상태 표시 갱신, 로컬 미저장 변경 있어도 시도). manual=false (자동) 면 미저장
 // 변경이 있을 땐 건너뜀 — 사용자 작업 덮어쓰지 않도록.
+//
+// Workers KV 는 eventual consistency 라서 PUT 직후 같은 edge 에서 GET 해도
+// 최대 60초까지 옛 값을 돌려줄 수 있음. 그래서 방금 push 한 경우에는 refetch
+// 를 생략하고 로컬 in-memory state 를 그대로 신뢰 (= 방금 보낸 것이 최신).
 let _refreshInFlight = false;
 async function refreshFromServerNow({ manual = false } = {}) {
   if (_refreshInFlight) return;
@@ -483,12 +487,30 @@ async function refreshFromServerNow({ manual = false } = {}) {
   _refreshInFlight = true;
   if (manual) setSyncStatus('saving');
   try {
-    // 미저장(debounce 큐) 또는 진행 중 푸시가 있으면 fetch 전에 먼저 완료시킴.
-    // 안 그러면 fetch 가 서버의 옛 state 를 받아 방금 편집한 로컬을 덮어씀.
+    const hadPending = !!_saveTimer
+                     || _syncStatus === 'pending'
+                     || _syncStatus === 'saving';
+    // debounce 큐가 있으면 즉시 비우고, pending/saving 이면 push 완료까지 대기.
     if (_saveTimer) { clearTimeout(_saveTimer); _saveTimer = null; }
     if (_syncStatus === 'pending' || _syncStatus === 'saving') {
       await pushToServer();
     }
+
+    if (hadPending) {
+      // KV propagation 회피: 방금 보낸 게 최신이므로 fetch 생략.
+      // 푸시 결과에 따라 상태 메시지만 갱신하고 끝.
+      if (manual) {
+        if (_syncStatus === 'error' || _syncStatus === 'unauthorized') {
+          // push 실패 — 상태는 이미 setSyncStatus 로 표시됨
+        } else {
+          setSyncStatus(getEditToken() ? 'saved' : 'readonly');
+        }
+      }
+      render();  // in-memory state 기준 다시 렌더
+      return;
+    }
+
+    // 미저장 변경이 없을 때만 다른 기기 변경분을 가져오기 위해 fetch.
     const remote = await fetchFromServer();
     if (!remote) { if (manual) setSyncStatus('error'); return; }
     state = migrate(remote);
