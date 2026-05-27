@@ -371,6 +371,9 @@ input, textarea { font-family: inherit; font-size: 16px; }
 .btn.secondary:active { background: #f1f5f9; }
 .btn.small { padding: 6px 10px; font-size: .82rem; font-weight: 500; }
 
+/* HTML hidden 속성이 .btn 의 display:inline-flex 에 덮이지 않도록 전역 우선 */
+[hidden] { display: none !important; }
+
 /* 보기 전용 모드에서 input 자리에 노출되는 텍스트 — input 과 같은 박스 느낌 */
 .form-readonly-text {
   display: block;
