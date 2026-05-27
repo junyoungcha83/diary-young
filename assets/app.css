@@ -369,6 +369,7 @@ input, textarea { font-family: inherit; font-size: 16px; }
   border: 1px solid var(--border);
 }
 .btn.secondary:active { background: #f1f5f9; }
+.btn.small { padding: 6px 10px; font-size: .82rem; font-weight: 500; }
 .btn.danger { background: var(--danger); }
 .btn.danger.ghost {
   background: transparent;

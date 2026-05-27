@@ -28,6 +28,7 @@
   </div>
   <div class="header-right">
     <span class="sync-status" id="syncStatus"></span>
+    <button class="btn secondary small" id="btnToday" title="오늘 날짜로 이동">오늘</button>
     <button class="icon-btn" id="btnEdit" title="편집 잠금/해제" aria-label="편집">🔒</button>
   </div>
 </header>
@@ -75,6 +76,7 @@
         <option value="7">7월</option><option value="8">8월</option><option value="9">9월</option>
         <option value="10">10월</option><option value="11">11월</option><option value="12">12월</option>
       </select></label>
+      <button class="btn secondary" id="btnSummaryRefresh" title="서버에서 최신 일기 받아오기">↻ 새로고침</button>
     </div>
     <div class="summary-stats muted" id="summaryStats"></div>
     <div class="summary-feed" id="summaryFeed"></div>
@@ -182,6 +184,7 @@
 
     <div class="dialog-footer">
       <button type="button" class="btn danger ghost" id="diaryDelete">삭제</button>
+      <button type="button" class="btn secondary" id="diaryGoto" hidden>일기 탭에서 보기 ↗</button>
     </div>
   </form>
 </dialog>

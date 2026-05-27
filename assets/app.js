@@ -25,6 +25,7 @@ let selectedDate = todayStr();
 let editEntryId = null;
 let editingPhotos = [];   // 모달에서 편집 중인 photos 배열 (저장 시 entry.photos 로 커밋)
 let multiEntries = [];    // OCR이 N>1편 감지 시 — 각 원소 { date, weekday, title, content, tags, excluded }
+let _dialogSource = null; // 다이얼로그 오픈 출처 — 'summary' 면 보기 전용(삭제 X, 저장 X, 바로가기 ✓)
 let searchQuery = '';
 let activeTagFilter = '';
 
@@ -104,8 +105,10 @@ function migrate(loaded) {
 
 let _saveTimer = null;
 let _saveCtrl  = null;
+let _syncStatus = 'idle';   // 현재 동기화 상태 — 자동 새로고침이 미저장 변경을 덮어쓰지 않게 판단용
 
 function setSyncStatus(s) {
+  _syncStatus = s;
   const el = document.getElementById('syncStatus');
   if (!el) return;
   const map = {
@@ -468,6 +471,27 @@ async function fetchFromServer() {
     if (json && Array.isArray(json.entries)) return json;
   } catch (e) {}
   return null;
+}
+
+// 서버에서 최신 state 를 받아 화면에 반영. manual=true 면 사용자가 직접 누른 경우
+// (상태 표시 갱신, 로컬 미저장 변경 있어도 시도). manual=false (자동) 면 미저장
+// 변경이 있을 땐 건너뜀 — 사용자 작업 덮어쓰지 않도록.
+let _refreshInFlight = false;
+async function refreshFromServerNow({ manual = false } = {}) {
+  if (_refreshInFlight) return;
+  if (!manual && (_syncStatus === 'pending' || _syncStatus === 'saving')) return;
+  _refreshInFlight = true;
+  if (manual) setSyncStatus('saving');
+  try {
+    const remote = await fetchFromServer();
+    if (!remote) { if (manual) setSyncStatus('error'); return; }
+    state = migrate(remote);
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) {}
+    if (manual) setSyncStatus(getEditToken() ? 'saved' : 'readonly');
+    render();
+  } finally {
+    _refreshInFlight = false;
+  }
 }
 
 async function loadInitial() {
@@ -844,10 +868,10 @@ function renderSummary() {
         openPhotoViewer(img.src);
       };
     });
-    // 카드 자체 클릭 → 편집 다이얼로그 (read-only면 열람만)
+    // 카드 자체 클릭 → 보기 전용 다이얼로그 (요약 탭은 편집/삭제 없이 열람만)
     post.addEventListener('click', (ev) => {
       if (ev.target.tagName === 'IMG') return;
-      openDiaryDialog(post.dataset.id);
+      openDiaryDialog(post.dataset.id, { source: 'summary' });
     });
   });
 }
@@ -866,7 +890,12 @@ function renderSettings() {
 }
 
 // ── 다이얼로그 ─────────────────────────────────
-function openDiaryDialog(editId) {
+// opts.source: 'summary' 면 보기 전용 — 편집 권한이 있어도 저장/삭제는 숨기고
+//              '일기 탭에서 보기 ↗' 바로가기 버튼만 노출.
+function openDiaryDialog(editId, opts) {
+  const source = (opts && opts.source) || 'diary';
+  _dialogSource = source;
+  // 새 일기 작성은 편집 권한 필요. 보기 전용 출처(summary) 는 항상 기존 entry 열람.
   if (!editId && !ensureEditable()) return;
   editEntryId = editId || null;
   multiEntries = [];
@@ -877,6 +906,8 @@ function openDiaryDialog(editId) {
   const fTags = document.getElementById('fTags');
   const footer = dlg.querySelector('.dialog-footer');
   const title = document.getElementById('diaryDialogTitle');
+  const btnDelete = document.getElementById('diaryDelete');
+  const btnGoto   = document.getElementById('diaryGoto');
 
   // single 영역 보이게 (multi 잔존 방지)
   document.getElementById('singleEntrySection').classList.remove('hidden');
@@ -885,7 +916,7 @@ function openDiaryDialog(editId) {
   if (editEntryId) {
     const e = state.entries.find(x => x.id === editEntryId);
     if (!e) { editEntryId = null; return; }
-    title.textContent = '일기 편집';
+    title.textContent = source === 'summary' ? '일기 보기' : '일기 편집';
     fYear.value = (e.date || '').slice(0, 4) || new Date().getFullYear();
     fDate.value = e.date || todayStr();
     fContent.value = e.content || '';
@@ -910,13 +941,25 @@ function openDiaryDialog(editId) {
   }
   saveDraftNow();
 
-  // 편집 권한 없으면 입력 잠금 (열람만)
-  const readOnly = !getEditToken();
-  [fDate, fContent, fTags, fYear].forEach(el => { el.readOnly = readOnly; el.disabled = readOnly && (el === fDate || el === fYear); });
-  document.getElementById('diarySave').style.display = readOnly ? 'none' : '';
-  document.getElementById('fPhoto').disabled = readOnly;
-  document.querySelector('.photo-add-btn').style.display = readOnly ? 'none' : '';
-  if (readOnly) footer.classList.add('hidden');
+  // 보기 전용 판정 — 요약 탭 출처이거나 편집 권한이 없을 때
+  const viewOnly = source === 'summary' || !getEditToken();
+  // 모든 인풋은 readOnly 만 적용 — disabled <input type="date"> 는 일부 브라우저에서
+  // 값이 보이지 않는 문제가 있어 항상 disabled 해제.
+  [fDate, fContent, fTags, fYear].forEach(el => { el.readOnly = viewOnly; el.disabled = false; });
+  document.getElementById('diarySave').style.display = viewOnly ? 'none' : '';
+  document.getElementById('fPhoto').disabled = viewOnly;
+  document.querySelector('.photo-add-btn').style.display = viewOnly ? 'none' : '';
+
+  // 푸터 — 요약 출처면 삭제 숨기고 바로가기 노출. 그 외엔 기존 동작 유지.
+  if (source === 'summary' && editEntryId) {
+    footer.classList.remove('hidden');
+    btnDelete.hidden = true;
+    btnGoto.hidden = false;
+  } else {
+    btnDelete.hidden = false;
+    btnGoto.hidden = true;
+    if (viewOnly) footer.classList.add('hidden');
+  }
 }
 
 function closeDiaryDialog() {
@@ -925,6 +968,7 @@ function closeDiaryDialog() {
   editEntryId = null;
   editingPhotos = [];
   multiEntries = [];
+  _dialogSource = null;
   clearDraft();
   popLayerIfMatches('diary-modal');
 }
@@ -1077,6 +1121,8 @@ function setActiveTab(tab, opts) {
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('hidden', p.dataset.tab !== tab));
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
   render();
+  // 요약 탭으로 들어올 때마다 서버 최신 상태를 백그라운드로 가져와 다른 기기 변경분 반영
+  if (tab === 'summary' && prev !== 'summary') refreshFromServerNow();
 
   // history 동기화 (뒤로가기로 들어온 경우엔 건드리지 않음)
   if (opts && opts.fromBack) return;
@@ -1102,6 +1148,12 @@ function bindUI() {
   };
   document.getElementById('btnEdit').onclick = promptEditToken;
   document.getElementById('btnAdd').onclick = () => openDiaryDialog(null);
+  document.getElementById('btnToday').onclick = () => {
+    viewMonth = monthKey(new Date());
+    selectedDate = todayStr();
+    if (activeTab !== 'diary') setActiveTab('diary');
+    else render();
+  };
 
   document.querySelectorAll('.tab-btn').forEach(b => {
     b.onclick = () => setActiveTab(b.dataset.tab);
@@ -1122,6 +1174,17 @@ function bindUI() {
   document.getElementById('diaryDialog').addEventListener('cancel', (e) => { e.preventDefault(); closeDiaryDialog(); });
   document.getElementById('diaryForm').addEventListener('submit', (e) => { e.preventDefault(); saveDiary(); });
   document.getElementById('diaryDelete').onclick = deleteDiary;
+  document.getElementById('diaryGoto').onclick = () => {
+    // 요약 보기 → 일기 탭의 해당 날짜로 이동
+    const e = state.entries.find(x => x.id === editEntryId);
+    if (!e) { closeDiaryDialog(); return; }
+    const ds = e.date || todayStr();
+    closeDiaryDialog();
+    viewMonth = ds.slice(0, 7);
+    selectedDate = ds;
+    if (activeTab !== 'diary') setActiveTab('diary');
+    else render();
+  };
 
   // 단일 모드 입력 — 드래프트 자동 저장
   ['fYear', 'fDate', 'fContent', 'fTags'].forEach(id => {
@@ -1186,18 +1249,9 @@ function bindUI() {
     importJson(e.target.files && e.target.files[0]);
     e.target.value = '';
   });
-  document.getElementById('btnRefresh').onclick = async () => {
-    setSyncStatus('saving');
-    const remote = await fetchFromServer();
-    if (remote) {
-      state = migrate(remote);
-      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) {}
-      setSyncStatus(getEditToken() ? 'saved' : 'readonly');
-      render();
-    } else {
-      setSyncStatus('error');
-    }
-  };
+  document.getElementById('btnRefresh').onclick = () => refreshFromServerNow({ manual: true });
+  const btnSumRefresh = document.getElementById('btnSummaryRefresh');
+  if (btnSumRefresh) btnSumRefresh.onclick = () => refreshFromServerNow({ manual: true });
 }
 
 function restoreDraftIfAny() {
