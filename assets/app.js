@@ -125,9 +125,24 @@ function setSyncStatus(s) {
   el.className   = 'sync-status ' + m.cls;
 }
 
+// localStorage 는 오프라인 캐시일 뿐 — 용량 초과(사진 base64 누적)로 실패해도
+// 서버(KV)가 실제 저장소이므로 데이터 유실 아님. blocking alert 대신 1회만 콘솔
+// 경고하고, 기존 캐시는 그대로 둠(부분/손상 데이터를 덮어써 나중에 서버로 잘못
+// push 되는 위험 제거).
+let _quotaWarned = false;
+function cacheState(obj) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(obj));
+  } catch (e) {
+    if (!_quotaWarned) {
+      _quotaWarned = true;
+      console.warn('localStorage 용량 초과 — 오프라인 캐시 갱신은 생략됩니다. 서버 동기화는 정상 동작합니다.');
+    }
+  }
+}
+
 function saveLocal() {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
-  catch (e) { alert('localStorage 저장 실패 — 용량 초과 가능성'); }
+  cacheState(state);
 
   const token = getEditToken();
   if (!token) { setSyncStatus('readonly'); return; }
@@ -514,7 +529,7 @@ async function refreshFromServerNow({ manual = false } = {}) {
     const remote = await fetchFromServer();
     if (!remote) { if (manual) setSyncStatus('error'); return; }
     state = migrate(remote);
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) {}
+    cacheState(state);
     if (manual) setSyncStatus(getEditToken() ? 'saved' : 'readonly');
     render();
   } finally {
@@ -525,7 +540,7 @@ async function refreshFromServerNow({ manual = false } = {}) {
 async function loadInitial() {
   const remote = await fetchFromServer();
   if (remote) {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(remote)); } catch (e) {}
+    cacheState(remote);
     return migrate(remote);
   }
   const local = loadLocal();
