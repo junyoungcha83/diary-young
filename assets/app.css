@@ -666,8 +666,10 @@ body.read-only .fab { display: none; }
   max-width: 100vw; max-height: 100vh;
   border: none; padding: 0; margin: 0;
   background: rgba(0,0,0,.92);
-  display: flex; align-items: center; justify-content: center;
 }
+/* display 는 열렸을 때만 — 닫힌 dialog 는 UA 의 display:none 이 적용되게 한정.
+   (조건 없이 display:flex 면 close() 후에도 사진이 화면에 남는 버그) */
+.photo-viewer[open] { display: flex; align-items: center; justify-content: center; }
 .photo-viewer::backdrop { background: rgba(0,0,0,.92); }
 .photo-viewer img {
   max-width: 100%; max-height: 100%;
