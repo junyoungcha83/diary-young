@@ -1180,6 +1180,14 @@ async function importJson(file) {
 function setActiveTab(tab, opts) {
   const prev = activeTab;
   activeTab = tab;
+  // 요약탭으로 새로 진입 — 항상 현재 날짜가 포함된 달로 기본 셋팅 (render 전에 설정)
+  if (tab === 'summary' && prev !== 'summary') {
+    const t = todayStr();
+    const yEl = document.getElementById('summaryYear');
+    const mEl = document.getElementById('summaryMonth');
+    if (yEl) yEl.value = t.slice(0, 4);
+    if (mEl) mEl.value = String(parseInt(t.slice(5, 7), 10));
+  }
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('hidden', p.dataset.tab !== tab));
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
   render();
