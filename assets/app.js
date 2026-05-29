@@ -106,6 +106,8 @@ function migrate(loaded) {
 let _saveTimer = null;
 let _saveCtrl  = null;
 let _syncStatus = 'idle';   // 현재 동기화 상태 — 자동 새로고침이 미저장 변경을 덮어쓰지 않게 판단용
+let _lastLocalChangeAt = 0; // 마지막 로컬 수정/삭제 시각 — KV 전파 윈도우 동안 stale refetch 억제
+const KV_PROPAGATION_MS = 60000;  // Workers KV eventual consistency 최대 지연
 
 function setSyncStatus(s) {
   _syncStatus = s;
@@ -142,6 +144,7 @@ function cacheState(obj) {
 }
 
 function saveLocal() {
+  _lastLocalChangeAt = Date.now();
   cacheState(state);
 
   const token = getEditToken();
@@ -502,9 +505,13 @@ async function refreshFromServerNow({ manual = false } = {}) {
   _refreshInFlight = true;
   if (manual) setSyncStatus('saving');
   try {
+    // 최근 60초 안에 로컬 수정/삭제가 있었으면, push 가 끝났어도 KV 전파가
+    // 아직일 수 있어 fetch 가 stale 값을 줄 위험 → in-memory 를 신뢰(refetch 생략).
+    const recentLocal = (Date.now() - _lastLocalChangeAt) < KV_PROPAGATION_MS;
     const hadPending = !!_saveTimer
                      || _syncStatus === 'pending'
-                     || _syncStatus === 'saving';
+                     || _syncStatus === 'saving'
+                     || recentLocal;
     // debounce 큐가 있으면 즉시 비우고, pending/saving 이면 push 완료까지 대기.
     if (_saveTimer) { clearTimeout(_saveTimer); _saveTimer = null; }
     if (_syncStatus === 'pending' || _syncStatus === 'saving') {
