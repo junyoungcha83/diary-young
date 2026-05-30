@@ -133,21 +133,35 @@ function normalizeEntries(text, year) {
   const fallbackYear = (typeof year === 'number' && year >= 1900 && year <= 2100) ? year : null;
   const entries = arr.map(e => {
     const md = String(e.date_md || '').trim();
-    const mdMatch = /^(\d{1,2})[-/.](\d{1,2})$/.exec(md);
-    // 항목별 연도 추출 — 4자리 우선, 두 자리는 19xx/20xx 보정
-    let entryYear = fallbackYear;
-    const yRaw = String(e.year == null ? '' : e.year).trim();
-    const yMatch = /(\d{4})/.exec(yRaw) || /^(\d{2})$/.exec(yRaw);
-    if (yMatch) {
-      let yy = parseInt(yMatch[1], 10);
-      if (yy < 100) yy += (yy >= 70 ? 1900 : 2000);
-      if (yy >= 1900 && yy <= 2100) entryYear = yy;
-    }
     let date = '';
-    if (mdMatch && entryYear) {
-      const mm = String(parseInt(mdMatch[1], 10)).padStart(2, '0');
-      const dd = String(parseInt(mdMatch[2], 10)).padStart(2, '0');
-      date = `${entryYear}-${mm}-${dd}`;
+
+    // 0) date_md(또는 date)에 전체 날짜(YYYY-MM-DD, YYYY.MM.DD, YYYY/MM/DD)가 통째로
+    //    들어온 경우 — 사용자의 표준 포맷(2019-01-06). AI가 안 쪼개도 정확히 처리.
+    const full = /(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/.exec(md)
+              || /(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/.exec(String(e.date || ''));
+    if (full) {
+      const yy = parseInt(full[1], 10);
+      if (yy >= 1900 && yy <= 2100) {
+        date = `${yy}-${String(parseInt(full[2], 10)).padStart(2, '0')}-${String(parseInt(full[3], 10)).padStart(2, '0')}`;
+      }
+    }
+
+    // 1) 아니면 항목별 연도(year 필드) + MM-DD 조합. 연도 4자리 우선, 두 자리는 19xx/20xx 보정.
+    if (!date) {
+      const mdMatch = /^(\d{1,2})[-/.](\d{1,2})$/.exec(md);
+      let entryYear = fallbackYear;
+      const yRaw = String(e.year == null ? '' : e.year).trim();
+      const yMatch = /(\d{4})/.exec(yRaw) || /^(\d{2})$/.exec(yRaw);
+      if (yMatch) {
+        let yy = parseInt(yMatch[1], 10);
+        if (yy < 100) yy += (yy >= 70 ? 1900 : 2000);
+        if (yy >= 1900 && yy <= 2100) entryYear = yy;
+      }
+      if (mdMatch && entryYear) {
+        const mm = String(parseInt(mdMatch[1], 10)).padStart(2, '0');
+        const dd = String(parseInt(mdMatch[2], 10)).padStart(2, '0');
+        date = `${entryYear}-${mm}-${dd}`;
+      }
     }
     const bboxes = Array.isArray(e.photo_bboxes) ? e.photo_bboxes
                  : Array.isArray(e.photo_bbox) ? [e.photo_bbox]
