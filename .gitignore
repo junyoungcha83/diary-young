@@ -3,3 +3,6 @@ node_modules/
 *.log
 .wrangler/
 .dev.vars
+
+# 다른 프로젝트의 VS Code 워크스페이스 파일 (실수로 생성됨)
+*.code-workspace
