@@ -40,8 +40,10 @@ async function ocrDiaryPhoto(env, dataUrl, year) {
   const b64 = m[2];
 
   const yearHint = (typeof year === 'number' && year >= 1900 && year <= 2100)
-    ? `이미지에 연도가 안 나와도, 사용자가 선택한 연도는 ${year}년입니다. 모든 일자는 이 연도로 가정하세요.`
-    : '이미지에 연도가 안 나오면 그 항목은 응답에서 빼세요.';
+    ? `한 장에 여러 해의 일기가 섞여 있을 수 있습니다. 각 일기의 연도를 독립적으로 판단하세요. ` +
+      `일기/이미지에 연도가 보이면(예: 2019년, 24년, '19) 그 연도를 그 항목의 year 로 적으세요. ` +
+      `연도 표기가 전혀 없는 항목만 사용자가 선택한 ${year}년으로 가정하세요.`
+    : '이미지에 연도가 안 나오면 그 항목은 응답에서 빼세요. 연도가 보이면 그 연도를 year 로 적으세요.';
 
   const prompt =
     '당신은 한글 캡처 이미지에서 일기 텍스트를 정확히 추출하는 OCR 전문가입니다. ' +
@@ -64,6 +66,7 @@ async function ocrDiaryPhoto(env, dataUrl, year) {
     '순수 JSON 배열만 응답하세요 (설명·코드블록·마크다운 금지). 각 원소:\n' +
     '{\n' +
     '  "date_md": "MM-DD 형식. 예: 12-03. 못 읽으면 빈 문자열",\n' +
+    '  "year": "이 일기에 연도가 보이면 4자리 숫자 문자열(예: 2019). 두 자리만 보이면 그대로(예: 19). 안 보이면 빈 문자열",\n' +
     '  "weekday": "월요일/화요일/... 또는 빈 문자열",\n' +
     '  "title": "그 날의 제목이 있으면 그대로 옮기고, 없으면 빈 문자열",\n' +
     '  "content": "그 날의 본문. 위 정확도 규칙을 모두 적용. 줄바꿈은 \\n. 본문에 [그림: ...] 같은 메타 표기 금지.",\n' +
@@ -126,15 +129,25 @@ function normalizeEntries(text, year) {
     return { ok: false, error: 'parse_failed', raw: text.slice(0, 500) };
   }
   const arr = Array.isArray(parsed) ? parsed : [parsed];
-  const validYear = (typeof year === 'number' && year >= 1900 && year <= 2100) ? year : null;
+  // 선택 연도는 '폴백' — 항목 자체에 연도가 보이면 그쪽을 우선(여러 해 혼합 업로드 지원).
+  const fallbackYear = (typeof year === 'number' && year >= 1900 && year <= 2100) ? year : null;
   const entries = arr.map(e => {
     const md = String(e.date_md || '').trim();
     const mdMatch = /^(\d{1,2})[-/.](\d{1,2})$/.exec(md);
+    // 항목별 연도 추출 — 4자리 우선, 두 자리는 19xx/20xx 보정
+    let entryYear = fallbackYear;
+    const yRaw = String(e.year == null ? '' : e.year).trim();
+    const yMatch = /(\d{4})/.exec(yRaw) || /^(\d{2})$/.exec(yRaw);
+    if (yMatch) {
+      let yy = parseInt(yMatch[1], 10);
+      if (yy < 100) yy += (yy >= 70 ? 1900 : 2000);
+      if (yy >= 1900 && yy <= 2100) entryYear = yy;
+    }
     let date = '';
-    if (mdMatch && validYear) {
+    if (mdMatch && entryYear) {
       const mm = String(parseInt(mdMatch[1], 10)).padStart(2, '0');
       const dd = String(parseInt(mdMatch[2], 10)).padStart(2, '0');
-      date = `${validYear}-${mm}-${dd}`;
+      date = `${entryYear}-${mm}-${dd}`;
     }
     const bboxes = Array.isArray(e.photo_bboxes) ? e.photo_bboxes
                  : Array.isArray(e.photo_bbox) ? [e.photo_bbox]
@@ -167,8 +180,10 @@ async function parseTextDiary(env, text, year) {
   if (!text || !text.trim()) return { error: 'empty_text' };
 
   const yearHint = (typeof year === 'number' && year >= 1900 && year <= 2100)
-    ? `텍스트에 연도가 없어도, 사용자가 선택한 연도는 ${year}년입니다. 모든 일자는 이 연도로 가정하세요.`
-    : '텍스트에 연도가 없으면 그 항목은 응답에서 빼세요.';
+    ? `한 입력에 여러 해의 일기가 섞여 있을 수 있습니다. 각 일기의 연도를 독립적으로 판단하세요. ` +
+      `일기에 연도가 보이면(예: 2019년, 24년, '19) 그 연도를 그 항목의 year 로 적으세요. ` +
+      `연도 표기가 전혀 없는 항목만 사용자가 선택한 ${year}년으로 가정하세요.`
+    : '텍스트에 연도가 없으면 그 항목은 응답에서 빼세요. 연도가 보이면 그 연도를 year 로 적으세요.';
 
   const prompt =
     '당신은 한글 일기 텍스트를 일자별로 정확히 분리하는 도우미입니다.\n' +
@@ -185,6 +200,7 @@ async function parseTextDiary(env, text, year) {
     '순수 JSON 배열만 응답 (설명·코드블록·마크다운 금지). 각 원소:\n' +
     '{\n' +
     '  "date_md": "MM-DD",\n' +
+    '  "year": "이 일기에 연도가 보이면 4자리 숫자 문자열(예: 2019). 두 자리만 보이면 그대로(예: 19). 안 보이면 빈 문자열",\n' +
     '  "weekday": "월요일/화요일/... 또는 빈 문자열",\n' +
     '  "title": "그 날의 제목이 있으면, 없으면 빈 문자열",\n' +
     '  "content": "그 날의 본문 (위 규칙 준수, 줄바꿈은 \\n)",\n' +

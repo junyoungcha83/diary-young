@@ -1191,10 +1191,15 @@ function saveDiary() {
         updated_at: ts,
       });
     }
-    selectedDate = toSave[0].date;
+    // 여러 해가 섞여 있을 수 있으므로, 저장 후 첫 항목의 연·월로 달력 이동(결과 바로 보이게)
+    const sorted = toSave.slice().sort((a, b) => a.date.localeCompare(b.date));
+    selectedDate = sorted[0].date;
+    viewMonth = sorted[0].date.slice(0, 7);
     saveLocal();
     closeDiaryDialog();
     render();
+    const years = new Set(toSave.map(e => e.date.slice(0, 4)));
+    alert(`${toSave.length}편 저장됨` + (years.size > 1 ? ` (${years.size}개 연도에 자동 분류)` : ''));
     return;
   }
 
