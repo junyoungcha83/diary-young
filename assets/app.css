@@ -686,5 +686,26 @@ body.read-only .fab { display: none; }
   cursor: pointer;
 }
 
+/* ── 추천 태그 (본문 기반) ── */
+.tag-suggest {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  margin: -2px 0 2px;
+}
+.tag-suggest.hidden { display: none; }
+.tag-suggest .ts-label {
+  font-size: .72rem; color: var(--muted); margin-right: 2px;
+}
+.ts-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  border: 1px dashed var(--accent); background: var(--primary-bg);
+  color: var(--primary-dark); border-radius: 999px;
+  padding: 3px 9px; font-size: .78rem; cursor: pointer; line-height: 1.2;
+}
+.ts-chip:active { background: #ede9fe; }
+.ts-chip .ts-count {
+  font-size: .64rem; background: var(--accent); color: #fff;
+  border-radius: 999px; padding: 0 5px; min-width: 14px; text-align: center;
+}
+
 /* ── 읽기 전용 ── */
 body.read-only .editable-only { display: none; }

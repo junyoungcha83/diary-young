@@ -74,6 +74,112 @@ function escapeHtml(s) {
 function escapeAttr(s) { return escapeHtml(s); }
 function nowIso() { return new Date().toISOString(); }
 
+// ── 본문 → 태그 자동 추천 ─────────────────────────
+// 두 번 이상 언급된 단어 + 내용상 중요해 보이는(길고 고유한) 단어를 추천 태그로.
+// 전부 클라이언트에서 — 오프라인에서도 동작, 서버/AI 호출 없음.
+
+// 태그로 부적절한 흔한 단어(불용어)
+const TAG_STOPWORDS = new Set([
+  '오늘','내일','어제','그제','그리고','그래서','하지만','그런데','그러나','그러면','그리고는',
+  '정말','진짜','너무','매우','아주','조금','약간','그냥','완전','역시','이제','아직','벌써','계속','다시',
+  '우리','나는','내가','저는','제가','우리는','너는','네가','당신','그것','이것','저것','거기','여기','저기',
+  '때문','그때','이때','이번','다음','지난','요즘','오전','오후','아침','점심','저녁','새벽','동안',
+  '사람','생각','마음','하루','시간','정도','경우','모습','자신','부분','이런','저런','그런','어떤','무엇',
+  '거의','모든','모두','각각','서로','함께','같이','보니','해서','하고','한테','에게','에서','으로',
+  '했다','한다','된다','있다','없다','이다','같다','보다','오다','가다','싶다','좋다','많다','된',
+]);
+
+// 흔한 조사 — 어말에서 1회 제거해 어간 정규화 (긴 것부터)
+const TAG_JOSA = ['에서','에게','으로','한테','부터','까지','처럼','보다','이나','라도','조차','밖에','마다','이라','라는','이라는',
+  '은','는','이','가','을','를','와','과','도','만','의','에','로','나','들','께','랑'];
+
+function normalizeTagToken(tok) {
+  if (/^[A-Za-z]/.test(tok)) return tok.toLowerCase();   // 영문 소문자화
+  let t = tok;
+  // 한글 어말 조사 제거 — 최대 2회(예: 아이들이 → 아이들 → 아이). 어간 2자↑ 유지 시.
+  for (let pass = 0; pass < 2; pass++) {
+    let stripped = false;
+    for (const j of TAG_JOSA) {
+      if (t.length > j.length + 1 && t.endsWith(j)) { t = t.slice(0, -j.length); stripped = true; break; }
+    }
+    if (!stripped) break;
+  }
+  return t;
+}
+
+// 한글 용언(동사·형용사) 활용형/연결어미로 보이는 단어 — 태그 부적합(예: 즐거웠다, 맛있었다, 시원했고, 타봤는데).
+// 형태소 분석기 없이 어미 패턴으로 근사 판별. 영문은 항상 false.
+function looksLikePredicate(w) {
+  if (/^[A-Za-z]/.test(w)) return false;
+  return /(다|까|군|네|지|죠|걸|던|더라|구나|는데|은데|니까|거나|도록|아서|어서|여서|면서|지만|는다|ㄴ다|었|았|였|겠|고서)$/.test(w)
+    || /(했|였|았|었|하|해)(고|서|며|면|도)$/.test(w)   // 했고·였서·하며… 활용형+연결어미
+    || /(고|서|며|면)$/.test(w) && w.length <= 3;   // 짧은 연결어미(먹고·가서…)도 제외
+}
+
+// content 에서 추천 태그 목록 반환. existing 에 이미 있는 건 제외.
+// 반환: [{ word, count }] (count>=2 우선, 그다음 긴 단어; 최대 maxN)
+function suggestTags(content, existing, maxN = 8) {
+  if (!content) return [];
+  const exclude = new Set((existing || []).map(s => String(s).toLowerCase()));
+  const tokens = content.match(/[가-힣]{2,}|[A-Za-z][A-Za-z0-9]{1,}/g) || [];
+  const freq = new Map();
+  for (const raw of tokens) {
+    const norm = normalizeTagToken(raw);
+    if (norm.length < 2) continue;
+    if (TAG_STOPWORDS.has(norm)) continue;
+    freq.set(norm, (freq.get(norm) || 0) + 1);
+  }
+  const cands = [];
+  for (const [word, count] of freq) {
+    if (exclude.has(word.toLowerCase())) continue;
+    if (looksLikePredicate(word)) continue;           // 동사·형용사 활용형 제외(태그는 명사 위주)
+    // 1회 언급은 '중요 단어'로 보이는 3자 이상만 후보로(짧은 1회 단어는 노이즈)
+    if (count < 2 && word.length < 3) continue;
+    cands.push({ word, count, len: word.length });
+  }
+  cands.sort((a, b) => {
+    const aRep = a.count >= 2 ? 1 : 0, bRep = b.count >= 2 ? 1 : 0;
+    if (aRep !== bRep) return bRep - aRep;          // 2회↑ 먼저
+    if (b.count !== a.count) return b.count - a.count;
+    return b.len - a.len;                            // 그다음 긴 단어
+  });
+  return cands.slice(0, maxN);
+}
+
+function parseTagsField(raw) {
+  return String(raw || '').split(/[,\s]+/).map(s => s.replace(/^#/, '').trim()).filter(Boolean);
+}
+
+function renderTagSuggestions() {
+  const box = document.getElementById('tagSuggest');
+  if (!box) return;
+  const saveBtn = document.getElementById('diarySave');
+  const viewOnly = saveBtn && saveBtn.style.display === 'none';   // 보기 전용이면 숨김
+  const content = (document.getElementById('fContent') || {}).value || '';
+  const existing = parseTagsField((document.getElementById('fTags') || {}).value);
+  const sugg = viewOnly ? [] : suggestTags(content, existing);
+  if (!sugg.length) { box.classList.add('hidden'); box.innerHTML = ''; return; }
+  box.classList.remove('hidden');
+  box.innerHTML = `<span class="ts-label">추천 태그</span>` + sugg.map(s =>
+    `<button type="button" class="ts-chip" data-word="${escapeAttr(s.word)}">`
+    + `+ ${escapeHtml(s.word)}${s.count >= 2 ? `<span class="ts-count">${s.count}</span>` : ''}</button>`
+  ).join('');
+  box.querySelectorAll('.ts-chip').forEach(btn => {
+    btn.onclick = () => addSuggestedTag(btn.dataset.word);
+  });
+}
+
+function addSuggestedTag(word) {
+  const fTags = document.getElementById('fTags');
+  if (!fTags || fTags.readOnly) return;
+  const cur = parseTagsField(fTags.value);
+  if (cur.some(t => t.toLowerCase() === word.toLowerCase())) return;
+  cur.push(word);
+  fTags.value = cur.join(', ');
+  saveDraftDebounced();
+  renderTagSuggestions();
+}
+
 // ── 영속화 / 동기화 ──────────────────────────────
 function loadLocal() {
   try {
@@ -319,6 +425,7 @@ async function ocrFirstPhoto(photo) {
       }
       setOcrStatus(filled.length ? `✓ ${filled.join('·')} 자동 입력됨 (확인·수정 가능)`
                                   : '인식했지만 채울 항목 없음');
+      renderTagSuggestions();   // OCR 로 채워진 본문 기반 추천 갱신
       setTimeout(() => setOcrStatus(''), 4000);
       return;
     }
@@ -1022,6 +1129,8 @@ function openDiaryDialog(editId, opts) {
     btnGoto.hidden = true;
     if (viewOnly) footer.classList.add('hidden');
   }
+
+  renderTagSuggestions();   // 본문 기반 추천 태그 표시 (보기 전용이면 내부에서 숨김)
 }
 
 function closeDiaryDialog() {
@@ -1261,6 +1370,11 @@ function bindUI() {
     const el = document.getElementById(id);
     if (el) el.addEventListener('input', saveDraftDebounced);
   });
+  // 본문·태그 입력 시 추천 태그 갱신
+  ['fContent', 'fTags'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('input', renderTagSuggestions);
+  });
   document.getElementById('fTextFile').addEventListener('change', async (e) => {
     const file = e.target.files && e.target.files[0];
     e.target.value = '';
@@ -1362,6 +1476,7 @@ function restoreDraftIfAny() {
     renderPhotoThumbs();
     if (editEntryId) footer.classList.remove('hidden'); else footer.classList.add('hidden');
     if (!dlg.open) { dlg.showModal(); pushLayer('diary-modal'); }
+    renderTagSuggestions();   // 복원된 본문 기반 추천 갱신
     setOcrStatus('💾 이전 작업 복원됨');
     setTimeout(() => setOcrStatus(''), 3000);
   } else {
