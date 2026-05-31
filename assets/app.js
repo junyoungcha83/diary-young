@@ -461,26 +461,40 @@ async function ocrFirstPhoto(photo) {
 // 구조화된 일기 텍스트(날짜 줄 + 선택 [태그] 줄 + 본문)를 AI 없이 그 자리에서 분해.
 // 날짜가 한 줄에 단독으로 있는 포맷이면 편 수 제한 없이 정확/즉시 처리(잘림·비용·오류 없음).
 // 반환: [{ date:'YYYY-MM-DD', tags:[], content }]
+// 다양한 날짜 줄 형식 인식. 줄에 연도가 없으면 yearBase(파일 헤더 또는 선택 연도) 사용.
+// 지원: "2022-01-01"·"01-01"(숫자) / "토 1 1"(요일 월 일) / "[2022년] 1월 1일"·"1월 1일"(한글)
+function matchDiaryDate(line, yearBase) {
+  let m;
+  m = /^\s*(?:(\d{4})[-/.])?(\d{1,2})[-/.](\d{1,2})\s*$/.exec(line);
+  if (m) return { y: m[1] ? +m[1] : yearBase, mo: +m[2], dd: +m[3] };
+  m = /^\s*(?:[월화수목금토일]요일|[월화수목금토일])\s+(\d{1,2})\s+(\d{1,2})\s*$/.exec(line);
+  if (m) return { y: yearBase, mo: +m[1], dd: +m[2] };
+  m = /^\s*(?:\[?\s*(\d{4})\s*년\s*\]?\s*)?(?:[월화수목금토일]요일\s+)?(\d{1,2})\s*월\s*(\d{1,2})\s*일\s*(?:\([월화수목금토일]\)|[월화수목금토일]요일)?\s*$/.exec(line);
+  if (m) return { y: m[1] ? +m[1] : yearBase, mo: +m[2], dd: +m[3] };
+  return null;
+}
+
 function parseStructuredDiary(text, fallbackYear) {
-  const lines = String(text || '').replace(/\r\n?/g, '\n').split('\n');
-  const dateLine = /^\s*(?:(\d{4})[-/.])?(\d{1,2})[-/.](\d{1,2})\s*$/;   // YYYY-MM-DD 또는 MM-DD
-  const tagLine  = /^\s*(?:\[[^\[\]\n]+\]\s*)+$/;                        // [태그][태그]...
+  const norm = String(text || '').replace(/\r\n?/g, '\n');
+  // 파일 상단 [YYYY년] 헤더가 있으면 그 연도 우선(연도별 정리 파일), 없으면 선택 연도.
+  const hdr = norm.match(/\[\s*(\d{4})\s*년\s*\]/);
+  const yearBase = (hdr && +hdr[1] >= 1900 && +hdr[1] <= 2100) ? +hdr[1] : fallbackYear;
+  const lines = norm.split('\n');
+  const tagLine = /^\s*(?:\[[^\[\]\n]+\]\s*)+$/;                         // [태그][태그]...
   const out = [];
   let cur = null;
   for (const line of lines) {
-    const dm = dateLine.exec(line);
-    if (dm) {
+    const d = matchDiaryDate(line, yearBase);
+    if (d) {
       if (cur) out.push(cur);
-      const yy = dm[1] ? parseInt(dm[1], 10) : fallbackYear;
-      const mm = parseInt(dm[2], 10), dd = parseInt(dm[3], 10);
-      const ok = yy >= 1900 && yy <= 2100 && mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31;
+      const ok = d.y >= 1900 && d.y <= 2100 && d.mo >= 1 && d.mo <= 12 && d.dd >= 1 && d.dd <= 31;
       cur = {
-        date: ok ? `${yy}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}` : '',
+        date: ok ? `${d.y}-${String(d.mo).padStart(2, '0')}-${String(d.dd).padStart(2, '0')}` : '',
         tags: [], body: [], tagTaken: false,
       };
       continue;
     }
-    if (!cur) continue;                                  // 첫 날짜 줄 이전 텍스트는 무시
+    if (!cur) continue;                                  // 첫 날짜 줄 이전 텍스트(헤더 등)는 무시
     if (!cur.tagTaken && !cur.body.length && tagLine.test(line)) {   // 날짜 바로 다음 [태그] 줄 1개
       cur.tags = (line.match(/\[([^\[\]\n]+)\]/g) || []).map(t => t.slice(1, -1).trim()).filter(Boolean);
       cur.tagTaken = true;
@@ -513,13 +527,14 @@ async function importTextFile(file) {
     setOcrStatus('파일이 비어있어요', 'error');
     return;
   }
-  if (text.length > 200_000) {
-    setOcrStatus(`✗ 파일이 너무 큼 (${(text.length/1024).toFixed(0)}KB, 한도 200KB)`, 'error');
+  if (text.length > 1_000_000) {
+    setOcrStatus(`✗ 파일이 너무 큼 (${(text.length/1024).toFixed(0)}KB, 한도 1000KB)`, 'error');
     return;
   }
 
-  // 0) 구조화 포맷(날짜 줄 + [태그] + 본문)이면 AI 없이 즉시 분해.
-  //    많은 편(수십~수백)도 잘림·실패 없이 처리. 2편 이상일 때만 적용(자유형식은 AI 폴백).
+  // 0) 구조화 포맷(날짜 줄 + 선택 [태그] + 본문)이면 AI 없이 즉시 분해.
+  //    1년치(수백 편)도 잘림·실패 없이 처리. 2편 이상일 때만 적용(자유형식은 AI 폴백).
+  //    연도는 파일 [YYYY년] 헤더 우선, 없으면 선택 연도(year).
   const local = parseStructuredDiary(text, year);
   if (local.length >= 2) {
     multiEntries = local.map(e => ({
@@ -527,9 +542,10 @@ async function importTextFile(file) {
       tags: e.tags, photos: [], excluded: false,
     }));
     enterMultiMode();
-    const years = new Set(local.map(e => e.date.slice(0, 4)));
-    setOcrStatus(`✓ ${local.length}편 분리됨` + (years.size > 1 ? ` (${years.size}개 연도)` : '') + ' — 검토 후 저장');
-    setTimeout(() => setOcrStatus(''), 5000);
+    const years = [...new Set(local.map(e => e.date.slice(0, 4)))].sort();
+    const yearLabel = years.length === 1 ? ` (${years[0]}년)` : ` (${years.length}개 연도: ${years.join('·')})`;
+    setOcrStatus(`✓ ${local.length}편 분리됨${yearLabel} — 검토 후 저장`);
+    setTimeout(() => setOcrStatus(''), 6000);
     return;
   }
 

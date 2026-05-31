@@ -6,3 +6,6 @@ node_modules/
 
 # 다른 프로젝트의 VS Code 워크스페이스 파일 (실수로 생성됨)
 *.code-workspace
+
+# 로컬 백업(개인 데이터) — 저장소에 올리지 않음
+diary-backup-*.json
