@@ -352,6 +352,36 @@ export default {
       return json(result, status, cors);
     }
 
+    // 사진 업로드 — KV 에 별도 키('photo:..')로 저장(편집 토큰 필요). 본문 문서와 분리해 용량 문제 해소.
+    if (url.pathname === '/api/photo' && req.method === 'POST') {
+      const token = req.headers.get('X-Edit-Token') || '';
+      if (!env.EDIT_TOKEN || token !== env.EDIT_TOKEN) return json({ error: 'unauthorized' }, 401, cors);
+      const ct = req.headers.get('Content-Type') || 'image/jpeg';
+      if (!/^image\//.test(ct)) return json({ error: 'invalid_type' }, 400, cors);
+      const buf = await req.arrayBuffer();
+      if (buf.byteLength === 0) return json({ error: 'empty' }, 400, cors);
+      if (buf.byteLength > 20 * 1024 * 1024) return json({ error: 'too_large' }, 413, cors);  // KV 값 한도 25MB 내
+      const ext = ct.includes('png') ? 'png' : ct.includes('webp') ? 'webp' : 'jpg';
+      const key = `p_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}.${ext}`;
+      await env.DIARY.put('photo:' + key, buf, { metadata: { ct } });
+      return json({ ok: true, key, url: `${url.origin}/api/photo/${key}` }, 200, cors);
+    }
+
+    // 사진 제공 — 공개(앱 <img> 가 로드). 장기 불변 캐시 → KV 읽기 최소화.
+    if (url.pathname.startsWith('/api/photo/') && req.method === 'GET') {
+      const key = decodeURIComponent(url.pathname.slice('/api/photo/'.length));
+      if (!/^[\w.\-]+$/.test(key)) return new Response('Bad Request', { status: 400, headers: cors });
+      const { value, metadata } = await env.DIARY.getWithMetadata('photo:' + key, { type: 'arrayBuffer' });
+      if (!value) return new Response('Not Found', { status: 404, headers: cors });
+      return new Response(value, {
+        headers: {
+          'Content-Type': (metadata && metadata.ct) || 'image/jpeg',
+          'Cache-Control': 'public, max-age=31536000, immutable',
+          'Access-Control-Allow-Origin': '*',
+        },
+      });
+    }
+
     if (url.pathname === '/' || url.pathname === '/api/health') {
       return json({ ok: true, service: 'diary-young-api' }, 200, cors);
     }

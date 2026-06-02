@@ -7,3 +7,4 @@ compatibility_date = "2024-12-01"
 [[kv_namespaces]]
 binding = "DIARY"
 id = "faf3e74d317b49c3b2fc7ccaf3cbb480"
+# 사진은 동일 KV 에 'photo:..' 키로 분리 저장(본문 문서와 분리).

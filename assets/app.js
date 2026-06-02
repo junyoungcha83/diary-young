@@ -1231,78 +1231,90 @@ function renderPhotoThumbs() {
   });
 }
 
-function saveDiary() {
-  if (!ensureEditable()) return;
+// 사진 1장을 R2 로 업로드하고 영구 URL 반환. base64(data:) 만 업로드, 이미 URL 이면 그대로.
+async function uploadPhotoToR2(dataUrl) {
+  const token = getEditToken();
+  const blob = await (await fetch(dataUrl)).blob();
+  const res = await fetch(`${API_BASE}/api/photo`, {
+    method: 'POST',
+    headers: { 'Content-Type': blob.type || 'image/jpeg', 'X-Edit-Token': token },
+    body: blob,
+  });
+  if (!res.ok) throw new Error('photo_upload_failed');
+  const j = await res.json();
+  if (!j || !j.url) throw new Error('photo_upload_failed');
+  return j.url;
+}
+async function commitPhotos(photos) {
+  const out = [];
+  for (const p of (photos || [])) {
+    if (p && typeof p.url === 'string' && p.url.startsWith('data:')) {
+      out.push({ id: p.id, url: await uploadPhotoToR2(p.url) });
+    } else if (p && p.url) {
+      out.push({ id: p.id, url: p.url });
+    }
+  }
+  return out;
+}
 
-  // 다중 모드 — multiEntries 중 excluded 아닌 것들 일괄 저장 (사진은 첨부 안 함)
-  if (multiEntries.length > 0) {
-    const toSave = multiEntries.filter(e => !e.excluded);
-    const invalid = toSave.filter(e => !e.date || !/^\d{4}-\d{2}-\d{2}$/.test(e.date) || !e.content);
-    if (invalid.length) {
-      alert(`${invalid.length}편의 항목에 날짜 또는 본문이 없습니다. 수정하거나 '제외' 처리하세요.`);
+let _savingDiary = false;
+async function saveDiary() {
+  if (!ensureEditable()) return;
+  if (_savingDiary) return;
+  const saveBtn = document.getElementById('diarySave');
+  const setSaving = on => { _savingDiary = on; if (saveBtn) { saveBtn.disabled = on; saveBtn.textContent = on ? '저장 중…' : '저장'; } };
+  setSaving(true);
+  try {
+    // 다중 모드 — multiEntries 중 excluded 아닌 것들 일괄 저장
+    if (multiEntries.length > 0) {
+      const toSave = multiEntries.filter(e => !e.excluded);
+      const invalid = toSave.filter(e => !e.date || !/^\d{4}-\d{2}-\d{2}$/.test(e.date) || !e.content);
+      if (invalid.length) { alert(`${invalid.length}편의 항목에 날짜 또는 본문이 없습니다. 수정하거나 '제외' 처리하세요.`); return; }
+      if (!toSave.length) { alert('저장할 일기가 없습니다. 최소 1편은 포함하세요.'); return; }
+      const ts = nowIso();
+      for (const e of toSave) {
+        const photos = await commitPhotos(e.photos);   // base64 → R2 URL
+        state.entries.push({
+          id: nextEntryId(), date: e.date, content: e.content || '', tags: e.tags || [],
+          photos, created_at: ts, updated_at: ts,
+        });
+      }
+      const sorted = toSave.slice().sort((a, b) => a.date.localeCompare(b.date));
+      selectedDate = sorted[0].date;
+      viewMonth = sorted[0].date.slice(0, 7);
+      saveLocal();
+      closeDiaryDialog();
+      render();
+      const years = new Set(toSave.map(e => e.date.slice(0, 4)));
+      alert(`${toSave.length}편 저장됨` + (years.size > 1 ? ` (${years.size}개 연도에 자동 분류)` : ''));
       return;
     }
-    if (!toSave.length) {
-      alert('저장할 일기가 없습니다. 최소 1편은 포함하세요.');
-      return;
+
+    // 단일 모드
+    const date = document.getElementById('fDate').value || todayStr();
+    const content = document.getElementById('fContent').value.trim();
+    const tagsRaw = document.getElementById('fTags').value;
+    const tags = tagsRaw.split(/[,\s]+/).map(s => s.replace(/^#/, '').trim()).filter(Boolean);
+    if (!content && !editingPhotos.length) { alert('본문 또는 사진은 있어야 합니다.'); return; }
+
+    const photos = await commitPhotos(editingPhotos);   // base64 → R2 URL
+    if (editEntryId) {
+      const e = state.entries.find(x => x.id === editEntryId);
+      if (!e) return;
+      e.date = date; e.content = content; e.tags = tags; e.photos = photos; e.updated_at = nowIso();
+      delete e.title;
+    } else {
+      state.entries.push({ id: nextEntryId(), date, content, tags, photos, created_at: nowIso(), updated_at: nowIso() });
     }
-    const ts = nowIso();
-    for (const e of toSave) {
-      state.entries.push({
-        id: nextEntryId(),
-        date: e.date,
-        content: e.content || '',
-        tags: e.tags || [],
-        photos: (e.photos || []).slice(),
-        created_at: ts,
-        updated_at: ts,
-      });
-    }
-    // 여러 해가 섞여 있을 수 있으므로, 저장 후 첫 항목의 연·월로 달력 이동(결과 바로 보이게)
-    const sorted = toSave.slice().sort((a, b) => a.date.localeCompare(b.date));
-    selectedDate = sorted[0].date;
-    viewMonth = sorted[0].date.slice(0, 7);
+    selectedDate = date;
     saveLocal();
     closeDiaryDialog();
     render();
-    const years = new Set(toSave.map(e => e.date.slice(0, 4)));
-    alert(`${toSave.length}편 저장됨` + (years.size > 1 ? ` (${years.size}개 연도에 자동 분류)` : ''));
-    return;
+  } catch (err) {
+    alert('사진 업로드에 실패했어요 — 네트워크를 확인하고 다시 저장해 주세요. (' + (err.message || err) + ')');
+  } finally {
+    setSaving(false);
   }
-
-  // 단일 모드 — 기존 동작
-  const date = document.getElementById('fDate').value || todayStr();
-  const content = document.getElementById('fContent').value.trim();
-  const tagsRaw = document.getElementById('fTags').value;
-  const tags = tagsRaw.split(/[,\s]+/).map(s => s.replace(/^#/, '').trim()).filter(Boolean);
-
-  if (!content && !editingPhotos.length) {
-    alert('본문 또는 사진은 있어야 합니다.');
-    return;
-  }
-
-  if (editEntryId) {
-    const e = state.entries.find(x => x.id === editEntryId);
-    if (!e) return;
-    e.date = date;
-    e.content = content;
-    e.tags = tags;
-    e.photos = editingPhotos.slice();
-    e.updated_at = nowIso();
-    delete e.title;   // 옛 데이터에 남아있던 title 제거 (필드 자체 삭제)
-  } else {
-    state.entries.push({
-      id: nextEntryId(),
-      date, content, tags,
-      photos: editingPhotos.slice(),
-      created_at: nowIso(),
-      updated_at: nowIso(),
-    });
-  }
-  selectedDate = date;
-  saveLocal();
-  closeDiaryDialog();
-  render();
 }
 
 function deleteDiary() {
