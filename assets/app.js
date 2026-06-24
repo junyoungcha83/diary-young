@@ -957,6 +957,7 @@ function diaryCardHtml(e) {
     <article class="diary-card" data-id="${escapeAttr(e.id)}">
       <div class="card-head">
         <span class="date">${escapeHtml(fmtDate(e.date))}</span>
+        <button type="button" class="card-edit" aria-label="수정" title="수정">✏️</button>
       </div>
       ${content}
       ${tags}
@@ -967,15 +968,15 @@ function diaryCardHtml(e) {
 
 function bindCardClicks(container) {
   container.querySelectorAll('.diary-card').forEach(card => {
+    // 우상단 ✏️ → 수정(팝업) 열기
+    const editBtn = card.querySelector('.card-edit');
+    if (editBtn) editBtn.onclick = (ev) => { ev.stopPropagation(); openDiaryDialog(card.dataset.id); };
     card.onclick = (ev) => {
       // 사진 클릭 시 뷰어 모달
       const img = ev.target.closest('.photos img');
-      if (img) {
-        ev.stopPropagation();
-        openPhotoViewer(img.src);
-        return;
-      }
-      openDiaryDialog(card.dataset.id);
+      if (img) { ev.stopPropagation(); openPhotoViewer(img.src); return; }
+      // 본문 클릭 = 펼쳐보기/접기(수정은 ✏️ 버튼으로만)
+      card.classList.toggle('expanded');
     };
   });
 }
@@ -1157,6 +1158,8 @@ function openDiaryDialog(editId, opts) {
     editingPhotos = [];
     footer.classList.add('hidden');
   }
+  // 편집/보기 = 가운데 팝업, 새 작성 = 전체화면(큰 화면)
+  dlg.classList.toggle('as-popup', !!editEntryId);
   renderPhotoThumbs();
   setOcrStatus('');
   if (!dlg.open) {

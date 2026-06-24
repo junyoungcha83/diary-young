@@ -175,6 +175,13 @@ input, textarea { font-family: inherit; font-size: 16px; }
   font-size: .75rem; color: var(--muted);
   white-space: nowrap;
 }
+.diary-card .card-head { align-items: center; }
+.diary-card .card-edit {
+  flex: 0 0 auto; background: var(--primary-bg, #f1ecfb); border: none;
+  border-radius: 8px; padding: 3px 9px; font-size: .9rem; line-height: 1;
+  cursor: pointer; margin-left: auto;
+}
+.diary-card .card-edit:active { transform: scale(.94); }
 .diary-card .content {
   font-size: .9rem; color: #374151;
   display: -webkit-box;
@@ -183,6 +190,9 @@ input, textarea { font-family: inherit; font-size: 16px; }
   overflow: hidden;
   white-space: pre-wrap;
   word-break: break-word;
+}
+.diary-card.expanded .content {
+  -webkit-line-clamp: unset; display: block;
 }
 .diary-card .tags {
   margin-top: 8px;
@@ -448,6 +458,17 @@ body.read-only .fab { display: none; }
   color: var(--text);
 }
 .diary-dialog::backdrop { background: rgba(0,0,0,.4); }
+/* 편집/보기 — 전체화면 대신 가운데 팝업 */
+.diary-dialog.as-popup {
+  width: min(520px, 92vw);
+  height: auto; max-height: 88vh;
+  margin: auto;
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 12px 40px rgba(0,0,0,.28);
+}
+.diary-dialog.as-popup .diary-form { height: auto; max-height: 88vh; }
+.diary-dialog.as-popup .dialog-header { border-radius: 16px 16px 0 0; }
 .diary-form {
   display: flex; flex-direction: column;
   height: 100%;
