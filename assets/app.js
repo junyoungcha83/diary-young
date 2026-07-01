@@ -1339,8 +1339,15 @@ function openPhotoViewer(src) {
 }
 function closePhotoViewer() {
   const dlg = document.getElementById('photoViewer');
-  if (dlg.open) dlg.close();
-  popLayerIfMatches('photo-viewer');
+  if (!dlg.open) return;
+  // 사진뷰어 레이어가 쌓여 있으면 dlg.close() 를 직접 하지 말고 history.back() 으로 닫는다.
+  // → popstate 핸들러가 "사진뷰어가 열려있음"을 보고 그것만 닫고 return → 원래 탭(요약 등) 유지.
+  //   (직접 close 후 back 하면 popstate 때 뷰어가 이미 닫혀 있어 탭이 diary 로 튕기던 버그 수정)
+  if (history.state && history.state.app === 'diary-young' && history.state.layer === 'photo-viewer') {
+    history.back();
+  } else {
+    dlg.close();
+  }
 }
 
 // ── 데이터 내보내기/가져오기 ────────────────────
